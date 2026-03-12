@@ -592,4 +592,66 @@ func OpenInBrowser(url string) error {
 	return cmd.Start()
 }
 
+// ApprovePR approves a pull request
+func ApprovePR(repo string, number int, body string) error {
+	args := []string{"pr", "review", fmt.Sprintf("%d", number), "-R", repo, "--approve"}
+	if body != "" {
+		args = append(args, "-b", body)
+	}
+	_, err := run(args...)
+	return err
+}
+
+// MergePR merges a pull request with the specified strategy
+// strategy can be: "merge" (default), "squash", or "rebase"
+func MergePR(repo string, number int, strategy string, autoMerge bool) error {
+	args := []string{"pr", "merge", fmt.Sprintf("%d", number), "-R", repo}
+	
+	switch strategy {
+	case "squash":
+		args = append(args, "--squash")
+	case "rebase":
+		args = append(args, "--rebase")
+	default:
+		args = append(args, "--merge")
+	}
+	
+	if autoMerge {
+		args = append(args, "--auto")
+	}
+	
+	_, err := run(args...)
+	return err
+}
+
+// ResolveThread marks a review thread as resolved using GraphQL
+func ResolveThread(threadID string) error {
+	query := `mutation($threadId: ID!) {
+		resolveReviewThread(input: { threadId: $threadId }) {
+			thread {
+				id
+				isResolved
+			}
+		}
+	}`
+	
+	_, err := run("api", "graphql", "-F", fmt.Sprintf("threadId=%s", threadID), "-f", fmt.Sprintf("query=%s", query))
+	return err
+}
+
+// UnresolveThread marks a review thread as unresolved using GraphQL
+func UnresolveThread(threadID string) error {
+	query := `mutation($threadId: ID!) {
+		unresolveReviewThread(input: { threadId: $threadId }) {
+			thread {
+				id
+				isResolved
+			}
+		}
+	}`
+	
+	_, err := run("api", "graphql", "-F", fmt.Sprintf("threadId=%s", threadID), "-f", fmt.Sprintf("query=%s", query))
+	return err
+}
+
 // run is defined in runner.go

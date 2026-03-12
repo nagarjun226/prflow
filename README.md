@@ -98,6 +98,9 @@ prflow version      # Print version
 | `c` | Checkout PR branch locally (finds repo or clones) |
 | `C` | Clone PR's repo to repos dir |
 | `/` | Search org repos to clone |
+| `a` | Approve PR (detail view) |
+| `m` | Merge PR with squash (detail view) |
+| `r` | Resolve selected review thread (detail view) |
 | `R` | Force refresh all data |
 
 ### Workspace (📂 section)

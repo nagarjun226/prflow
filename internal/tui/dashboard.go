@@ -144,6 +144,11 @@ type aiThreadDoneMsg struct {
 	err      error
 }
 
+type prActionDoneMsg struct {
+	action string
+	err    error
+}
+
 type dashTickMsg time.Time
 
 func RunDashboard(cfg *config.Config) error {
@@ -475,6 +480,43 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.section != sectionWorkspace {
 				return m, m.checkoutPRCmd()
 			}
+		case "a":
+			// Approve PR (only in detail view)
+			if m.viewMode == viewDetail && m.detailPR != nil {
+				pr := m.detailPR
+				return m, func() tea.Msg {
+					err := gh.ApprovePR(pr.Repo, pr.Number, "")
+					return prActionDoneMsg{action: "approved", err: err}
+				}
+			}
+		case "m":
+			// Merge PR (only in detail view)
+			if m.viewMode == viewDetail && m.detailPR != nil {
+				pr := m.detailPR
+				// Default to squash merge (most common)
+				return m, func() tea.Msg {
+					err := gh.MergePR(pr.Repo, pr.Number, "squash", false)
+					return prActionDoneMsg{action: "merged", err: err}
+				}
+			}
+		case "r":
+			// Resolve thread (only in detail view with threads)
+			if m.viewMode == viewDetail && len(m.detailThreads) > 0 {
+				unresolvedIdx := 0
+				for _, t := range m.detailThreads {
+					if t.IsResolved {
+						continue
+					}
+					if unresolvedIdx == m.threadCursor {
+						threadID := t.ID
+						return m, func() tea.Msg {
+							err := gh.ResolveThread(threadID)
+							return prActionDoneMsg{action: "resolved thread", err: err}
+						}
+					}
+					unresolvedIdx++
+				}
+			}
 		case "A":
 			// AI analysis
 			if m.aiAvailable && m.viewMode == viewDetail && m.detailPR != nil {
@@ -617,6 +659,17 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.aiThread = msg.analysis
 			m.statusMsg = "✓ Thread analysis complete"
+		}
+
+	case prActionDoneMsg:
+		if msg.err != nil {
+			m.statusMsg = fmt.Sprintf("✗ %s failed: %v", msg.action, msg.err)
+		} else {
+			m.statusMsg = fmt.Sprintf("✓ PR %s", msg.action)
+			// Reload PR detail to reflect changes
+			if m.detailPR != nil {
+				return m, loadDetail(m.detailPR)
+			}
 		}
 	}
 
@@ -1605,7 +1658,24 @@ func (m dashModel) renderDetailHelp() string {
 	pairs := []string{
 		helpPair("o", "open in browser"),
 		helpPair("c", "checkout"),
+		helpPair("a", "approve"),
+		helpPair("m", "merge"),
 	}
+	
+	// Only show resolve if there are unresolved threads
+	if len(m.detailThreads) > 0 {
+		hasUnresolved := false
+		for _, t := range m.detailThreads {
+			if !t.IsResolved {
+				hasUnresolved = true
+				break
+			}
+		}
+		if hasUnresolved {
+			pairs = append(pairs, helpPair("r", "resolve"))
+		}
+	}
+	
 	if m.aiAvailable {
 		pairs = append(pairs, helpPair("A", "AI analyze"))
 	}
