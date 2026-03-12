@@ -1027,25 +1027,67 @@ func (m dashModel) renderDetailHelp() string {
 
 func timeSince(t time.Time) string {
 	d := time.Since(t)
+	if d < 0 {
+		return "just now"
+	}
 	if d < time.Minute {
 		return "just now"
 	}
 	if d < time.Hour {
 		return fmt.Sprintf("%dm ago", int(d.Minutes()))
 	}
-	return fmt.Sprintf("%dh ago", int(d.Hours()))
+	hours := int(d.Hours())
+	if hours < 24 {
+		return fmt.Sprintf("%dh ago", hours)
+	}
+	days := hours / 24
+	if days == 1 {
+		return "yesterday"
+	}
+	if days < 30 {
+		return fmt.Sprintf("%dd ago", days)
+	}
+	months := days / 30
+	if months == 1 {
+		return "1 month ago"
+	}
+	if months < 12 {
+		return fmt.Sprintf("%d months ago", months)
+	}
+	years := months / 12
+	if years == 1 {
+		return "1 year ago"
+	}
+	return fmt.Sprintf("%d years ago", years)
 }
 
 func formatTimeAgo(isoTime string) string {
-	t, err := time.Parse(time.RFC3339, isoTime)
-	if err != nil {
-		// Try other formats
-		t, err = time.Parse("2006-01-02T15:04:05Z", isoTime)
-		if err != nil {
-			return ""
+	if isoTime == "" {
+		return ""
+	}
+	// Try multiple time formats
+	formats := []string{
+		time.RFC3339,
+		"2006-01-02T15:04:05Z",
+		"2006-01-02T15:04:05-07:00",
+		"2006-01-02 15:04:05 -0700 MST",
+		time.RFC3339Nano,
+	}
+	for _, fmt := range formats {
+		t, err := time.Parse(fmt, isoTime)
+		if err == nil {
+			return timeSince(t)
 		}
 	}
-	return timeSince(t)
+	return ""
+}
+
+func timeSinceStr(isoTime string) string {
+	result := formatTimeAgo(isoTime)
+	if result == "" {
+		return ""
+	}
+	return result
 }
 
 func truncate(s string, max int) string {

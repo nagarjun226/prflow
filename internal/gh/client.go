@@ -83,8 +83,26 @@ type RepoRef struct {
 	NameWithOwner string `json:"nameWithOwner"`
 }
 
+// Reviews handles both array format and {nodes:[]} format
 type Reviews struct {
-	Nodes []Review `json:"nodes"`
+	Nodes []Review
+}
+
+func (r *Reviews) UnmarshalJSON(data []byte) error {
+	var arr []Review
+	if err := json.Unmarshal(data, &arr); err == nil {
+		r.Nodes = arr
+		return nil
+	}
+	var obj struct {
+		Nodes []Review `json:"nodes"`
+	}
+	if err := json.Unmarshal(data, &obj); err == nil {
+		r.Nodes = obj.Nodes
+		return nil
+	}
+	r.Nodes = nil
+	return nil
 }
 
 type Review struct {
@@ -92,8 +110,26 @@ type Review struct {
 	State  string `json:"state"`
 }
 
+// ReviewRequests handles both array format and {nodes:[]} format
 type ReviewRequests struct {
-	Nodes []ReviewRequest `json:"nodes"`
+	Nodes []ReviewRequest
+}
+
+func (r *ReviewRequests) UnmarshalJSON(data []byte) error {
+	var arr []ReviewRequest
+	if err := json.Unmarshal(data, &arr); err == nil {
+		r.Nodes = arr
+		return nil
+	}
+	var obj struct {
+		Nodes []ReviewRequest `json:"nodes"`
+	}
+	if err := json.Unmarshal(data, &obj); err == nil {
+		r.Nodes = obj.Nodes
+		return nil
+	}
+	r.Nodes = nil
+	return nil
 }
 
 type ReviewRequest struct {
@@ -106,8 +142,29 @@ type StatusCheck struct {
 	Conclusion string `json:"conclusion"`
 }
 
+// Comments handles both array format (gh pr view) and {nodes:[]} format (GraphQL)
 type Comments struct {
-	Nodes []Comment `json:"nodes"`
+	Items []Comment
+}
+
+func (c *Comments) UnmarshalJSON(data []byte) error {
+	// Try array first (gh pr view format)
+	var arr []Comment
+	if err := json.Unmarshal(data, &arr); err == nil {
+		c.Items = arr
+		return nil
+	}
+	// Try {nodes:[]} format (GraphQL)
+	var obj struct {
+		Nodes []Comment `json:"nodes"`
+	}
+	if err := json.Unmarshal(data, &obj); err == nil {
+		c.Items = obj.Nodes
+		return nil
+	}
+	// Give up gracefully
+	c.Items = nil
+	return nil
 }
 
 type Comment struct {
