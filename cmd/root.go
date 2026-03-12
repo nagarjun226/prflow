@@ -33,7 +33,15 @@ func Execute() error {
 	cfg, err := config.Load()
 	if err != nil || len(cfg.Repos) == 0 {
 		// First run — launch onboarding
-		return tui.RunOnboarding()
+		if err := tui.RunOnboarding(); err != nil {
+			return err
+		}
+		// Reload config after onboarding
+		cfg, err = config.Load()
+		if err != nil || len(cfg.Repos) == 0 {
+			fmt.Println("Setup complete. Run 'prflow' again to launch the dashboard.")
+			return nil
+		}
 	}
 	return tui.RunDashboard(cfg)
 }

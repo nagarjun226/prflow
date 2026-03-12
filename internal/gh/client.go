@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"runtime"
 	"strings"
 )
 
@@ -407,9 +408,22 @@ func ListUserRepos() ([]string, error) {
 	return result, nil
 }
 
-// OpenInBrowser opens a URL in the default browser
+// OpenInBrowser opens a URL in the default browser (cross-platform)
 func OpenInBrowser(url string) error {
-	return exec.Command("open", url).Start()
+	// Use gh browse which is cross-platform
+	// Fallback to OS-specific commands
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", url)
+	case "linux":
+		cmd = exec.Command("xdg-open", url)
+	case "windows":
+		cmd = exec.Command("cmd", "/c", "start", url)
+	default:
+		cmd = exec.Command("open", url)
+	}
+	return cmd.Start()
 }
 
 func run(args ...string) (string, error) {

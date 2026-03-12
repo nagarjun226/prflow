@@ -48,9 +48,13 @@ func ScanWorkspaceRepo(path string) (*RepoStatus, error) {
 	// Fetch silently (don't block on this)
 	// We just use cached data
 
-	// Behind/ahead of main
-	if rs.HasRemote {
-		counts, err := gitCmd(path, "rev-list", "--left-right", "--count", "origin/main...HEAD")
+	// Detect default branch (main, master, develop, etc.)
+	defaultBranch := detectDefaultBranch(path)
+
+	// Behind/ahead of default branch
+	if rs.HasRemote && defaultBranch != "" {
+		counts, err := gitCmd(path, "rev-list", "--left-right", "--count",
+			fmt.Sprintf("origin/%s...HEAD", defaultBranch))
 		if err == nil {
 			parts := strings.Fields(counts)
 			if len(parts) == 2 {
@@ -162,6 +166,27 @@ func RenderRepoStatus(rs *RepoStatus, selected bool) string {
 	}
 
 	return s.String()
+}
+
+// detectDefaultBranch finds the default branch name (main, master, etc.)
+func detectDefaultBranch(path string) string {
+	// Try: git symbolic-ref refs/remotes/origin/HEAD
+	out, err := gitCmd(path, "symbolic-ref", "refs/remotes/origin/HEAD")
+	if err == nil {
+		// Output: refs/remotes/origin/main
+		parts := strings.Split(strings.TrimSpace(out), "/")
+		if len(parts) > 0 {
+			return parts[len(parts)-1]
+		}
+	}
+	// Fallback: check if common branch names exist
+	for _, branch := range []string{"main", "master", "develop"} {
+		_, err := gitCmd(path, "rev-parse", "--verify", fmt.Sprintf("origin/%s", branch))
+		if err == nil {
+			return branch
+		}
+	}
+	return "main" // last resort
 }
 
 func parseRepoName(remote string) string {

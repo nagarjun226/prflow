@@ -2,7 +2,7 @@ package tui
 
 import (
 	"fmt"
-	osexec "os/exec"
+	"os"
 	"strings"
 	"time"
 
@@ -70,11 +70,14 @@ type dashModel struct {
 	threadCursor  int
 
 	// State
-	loading  bool
-	lastSync time.Time
-	width    int
-	height   int
-	err      string
+	loading    bool
+	lastSync   time.Time
+	width      int
+	height     int
+	err        string
+	statusMsg  string // temporary status message (git ops feedback)
+	spinner    int
+	spinFrames []string
 }
 
 type syncDoneMsg struct {
@@ -95,6 +98,13 @@ type detailLoadedMsg struct {
 	err     error
 }
 
+type gitOpDoneMsg struct {
+	msg string
+	err error
+}
+
+type dashTickMsg time.Time
+
 func RunDashboard(cfg *config.Config) error {
 	db, err := cache.Open()
 	if err != nil {
@@ -105,10 +115,11 @@ func RunDashboard(cfg *config.Config) error {
 	username, _ := gh.CheckAuth()
 
 	m := dashModel{
-		cfg:      cfg,
-		db:       db,
-		username: username,
-		loading:  true,
+		cfg:        cfg,
+		db:         db,
+		username:   username,
+		loading:    true,
+		spinFrames: []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"},
 	}
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
@@ -116,25 +127,39 @@ func RunDashboard(cfg *config.Config) error {
 	return err
 }
 
-func (m dashModel) Init() tea.Cmd {
-	return tea.Batch(syncPRs(m.db), scanWorkspace(m.cfg))
+func dashTickCmd() tea.Cmd {
+	return tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg {
+		return dashTickMsg(t)
+	})
 }
 
-func syncPRs(db *cache.DB) tea.Cmd {
+func (m dashModel) Init() tea.Cmd {
+	return tea.Batch(syncPRs(m.db, m.cfg), scanWorkspace(m.cfg), dashTickCmd())
+}
+
+func syncPRs(db *cache.DB, cfg *config.Config) tea.Cmd {
 	return func() tea.Msg {
 		var doNow, waiting, review, done []cache.CachedPR
-		seenPRs := make(map[string]bool) // "repo#number" -> true
+		seenPRs := make(map[string]bool)
 
-		// Step 1: Search for my authored PRs
+		// Get current username for filtering
+		username, _ := gh.CheckAuth()
+
+		// Step 1: Search for my authored PRs (fast, cross-repo)
 		myPRs, _ := gh.SearchMyPRs()
 
-		// Step 2: For each unique repo found, get detailed PR info
+		// Build set of repos from: search results + config
 		repoSet := make(map[string]bool)
 		for _, pr := range myPRs {
-			repoSet[pr.Repository.NameWithOwner] = true
+			if pr.Repository.NameWithOwner != "" {
+				repoSet[pr.Repository.NameWithOwner] = true
+			}
+		}
+		for _, repo := range cfg.Repos {
+			repoSet[repo] = true
 		}
 
-		// Get rich PR data per repo (has reviewDecision, isDraft, etc.)
+		// Step 2: For each repo, get rich PR data
 		for repo := range repoSet {
 			repoPRs, err := gh.ListPRsForRepo(repo)
 			if err != nil {
@@ -148,33 +173,38 @@ func syncPRs(db *cache.DB) tea.Cmd {
 				}
 				seenPRs[key] = true
 
+				// Only show PRs authored by current user in Do Now / Waiting
+				isMyPR := strings.EqualFold(pr.Author.Login, username)
+
 				cached := cache.CachedPR{
 					PR:   *pr,
 					Repo: repo,
 				}
 
-				// Classify based on rich data
-				switch {
-				case pr.ReviewDecision == "CHANGES_REQUESTED":
-					cached.Section = "do_now"
-					doNow = append(doNow, cached)
-				case pr.ReviewDecision == "APPROVED":
-					cached.Section = "do_now"
-					doNow = append(doNow, cached)
-				case pr.Mergeable == "CONFLICTING":
-					cached.Section = "do_now"
-					doNow = append(doNow, cached)
-				default:
-					cached.Section = "waiting"
-					waiting = append(waiting, cached)
+				if isMyPR {
+					switch {
+					case pr.ReviewDecision == "CHANGES_REQUESTED":
+						cached.Section = "do_now"
+						doNow = append(doNow, cached)
+					case pr.ReviewDecision == "APPROVED":
+						cached.Section = "do_now"
+						doNow = append(doNow, cached)
+					case pr.Mergeable == "CONFLICTING":
+						cached.Section = "do_now"
+						doNow = append(doNow, cached)
+					default:
+						cached.Section = "waiting"
+						waiting = append(waiting, cached)
+					}
 				}
+				// Non-authored PRs will be caught by review requests below
 
 				db.UpsertPR(pr, repo, cached.Section)
 			}
 		}
 
-		// If per-repo fetch didn't work, fall back to search results
-		if len(doNow) == 0 && len(waiting) == 0 {
+		// Fallback: if per-repo didn't work, use search results directly
+		if len(doNow) == 0 && len(waiting) == 0 && len(myPRs) > 0 {
 			for i := range myPRs {
 				pr := &myPRs[i]
 				key := fmt.Sprintf("%s#%d", pr.Repository.NameWithOwner, pr.Number)
@@ -192,7 +222,7 @@ func syncPRs(db *cache.DB) tea.Cmd {
 			}
 		}
 
-		// Step 3: Get review requests
+		// Step 3: Get PRs where review is requested from me
 		reviewPRs, _ := gh.SearchReviewRequests()
 		for i := range reviewPRs {
 			pr := &reviewPRs[i]
@@ -264,26 +294,22 @@ func scanDir(dir string) ([]string, error) {
 }
 
 func readDirNames(dir string) ([]string, error) {
-	cmd := fmt.Sprintf("ls -1 %s 2>/dev/null", dir)
-	out, err := runShell(cmd)
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
-	if out == "" {
-		return nil, nil
+	var names []string
+	for _, e := range entries {
+		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
+			names = append(names, e.Name())
+		}
 	}
-	return strings.Split(out, "\n"), nil
+	return names, nil
 }
 
 func isGitRepo(path string) bool {
 	_, err := gitCmd(path, "rev-parse", "--is-inside-work-tree")
 	return err == nil
-}
-
-func runShell(cmd string) (string, error) {
-	c := osexec.Command("sh", "-c", cmd)
-	out, err := c.CombinedOutput()
-	return strings.TrimSpace(string(out)), err
 }
 
 func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -292,9 +318,18 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 
+	case dashTickMsg:
+		m.spinner = (m.spinner + 1) % len(m.spinFrames)
+		return m, dashTickCmd()
+
 	case tea.KeyMsg:
+		// Clear status message on any keypress
+		m.statusMsg = ""
+
 		switch msg.String() {
-		case "ctrl+c", "q":
+		case "ctrl+c":
+			return m, tea.Quit
+		case "q":
 			if m.viewMode == viewDetail {
 				m.viewMode = viewList
 				m.detailPR = nil
@@ -325,7 +360,13 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "down", "j":
 			if m.viewMode == viewDetail {
-				m.threadCursor++
+				maxThread := len(m.detailThreads) - 1
+				if maxThread < 0 {
+					maxThread = 0
+				}
+				if m.threadCursor < maxThread {
+					m.threadCursor++
+				}
 			} else {
 				max := m.currentListLen() - 1
 				if max < 0 {
@@ -343,18 +384,20 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.openInBrowser()
 		case "R":
 			m.loading = true
-			return m, tea.Batch(syncPRs(m.db), scanWorkspace(m.cfg))
+			m.err = ""
+			return m, tea.Batch(syncPRs(m.db, m.cfg), scanWorkspace(m.cfg))
 		case "p":
 			if m.section == sectionWorkspace {
-				m.gitPull()
+				return m, m.gitPullCmd()
 			}
 		case "P":
 			if m.section == sectionWorkspace {
-				m.gitPush()
+				return m, m.gitPushCmd()
 			}
 		case "f":
 			if m.section == sectionWorkspace {
-				return m, m.fetchAll()
+				m.statusMsg = "Fetching all repos..."
+				return m, m.fetchAllCmd()
 			}
 		}
 
@@ -383,6 +426,15 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewMode = viewDetail
 			m.threadCursor = 0
 		}
+
+	case gitOpDoneMsg:
+		if msg.err != nil {
+			m.statusMsg = fmt.Sprintf("✗ %s: %v", msg.msg, msg.err)
+		} else {
+			m.statusMsg = fmt.Sprintf("✓ %s", msg.msg)
+		}
+		// Re-scan workspace after git ops
+		return m, scanWorkspace(m.cfg)
 	}
 
 	return m, nil
@@ -474,26 +526,44 @@ func (m *dashModel) openInBrowser() {
 	}
 }
 
-func (m *dashModel) gitPull() {
-	if m.cursor < len(m.workspace) {
-		ws := m.workspace[m.cursor]
-		gitCmd(ws.Path, "pull", "origin", ws.Branch)
+func (m *dashModel) gitPullCmd() tea.Cmd {
+	if m.cursor >= len(m.workspace) {
+		return nil
 	}
-}
-
-func (m *dashModel) gitPush() {
-	if m.cursor < len(m.workspace) {
-		ws := m.workspace[m.cursor]
-		gitCmd(ws.Path, "push", "origin", ws.Branch)
-	}
-}
-
-func (m *dashModel) fetchAll() tea.Cmd {
+	ws := m.workspace[m.cursor]
 	return func() tea.Msg {
-		for _, ws := range m.workspace {
-			gitCmd(ws.Path, "fetch", "--all")
+		_, err := gitCmd(ws.Path, "pull", "origin", ws.Branch)
+		return gitOpDoneMsg{msg: fmt.Sprintf("pull %s/%s", ws.Name, ws.Branch), err: err}
+	}
+}
+
+func (m *dashModel) gitPushCmd() tea.Cmd {
+	if m.cursor >= len(m.workspace) {
+		return nil
+	}
+	ws := m.workspace[m.cursor]
+	return func() tea.Msg {
+		_, err := gitCmd(ws.Path, "push", "origin", ws.Branch)
+		return gitOpDoneMsg{msg: fmt.Sprintf("push %s/%s", ws.Name, ws.Branch), err: err}
+	}
+}
+
+func (m *dashModel) fetchAllCmd() tea.Cmd {
+	workspace := m.workspace
+	return func() tea.Msg {
+		failed := 0
+		for _, ws := range workspace {
+			_, err := gitCmd(ws.Path, "fetch", "--all")
+			if err != nil {
+				failed++
+			}
 		}
-		return workspaceScanMsg{repos: m.workspace}
+		msg := fmt.Sprintf("fetched %d repos", len(workspace))
+		var err error
+		if failed > 0 {
+			msg = fmt.Sprintf("fetched %d repos (%d failed)", len(workspace), failed)
+		}
+		return gitOpDoneMsg{msg: msg, err: err}
 	}
 }
 
@@ -524,10 +594,13 @@ func (m dashModel) viewDashboard() string {
 	// Help bar
 	help := m.renderHelp()
 
-	// Error
+	// Status / Error
 	errLine := ""
+	if m.statusMsg != "" {
+		errLine = "\n" + lipgloss.NewStyle().Foreground(colorCyan).Render("  "+m.statusMsg)
+	}
 	if m.err != "" {
-		errLine = "\n" + lipgloss.NewStyle().Foreground(colorDanger).Render("  Error: "+m.err)
+		errLine += "\n" + lipgloss.NewStyle().Foreground(colorDanger).Render("  Error: "+m.err)
 	}
 
 	// Layout: sidebar | main
@@ -576,7 +649,8 @@ func (m dashModel) renderMainPanel() string {
 	s.WriteString(sectionHeader.Render(m.section.String()) + "\n")
 
 	if m.loading {
-		s.WriteString("  Loading...\n")
+		spin := m.spinFrames[m.spinner%len(m.spinFrames)]
+		s.WriteString(fmt.Sprintf("  %s Loading PRs...\n", spin))
 		return mainPanelStyle.Render(s.String())
 	}
 
