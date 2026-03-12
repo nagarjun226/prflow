@@ -115,12 +115,6 @@ var (
 
 	// ─── Status Badges ──────────────────────────────────────
 
-	badgeApproved = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#1a1b26")).
-			Background(colorSuccess).
-			Padding(0, 1).
-			Bold(true)
-
 	badgeChanges = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#1a1b26")).
 			Background(colorDanger).

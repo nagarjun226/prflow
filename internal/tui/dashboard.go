@@ -158,16 +158,13 @@ func dashTickCmd() tea.Cmd {
 }
 
 func (m dashModel) Init() tea.Cmd {
-	return tea.Batch(syncPRs(m.db, m.cfg), scanWorkspace(m.cfg), dashTickCmd())
+	return tea.Batch(syncPRs(m.db, m.cfg, m.username), scanWorkspace(m.cfg), dashTickCmd())
 }
 
-func syncPRs(db *cache.DB, cfg *config.Config) tea.Cmd {
+func syncPRs(db *cache.DB, cfg *config.Config, username string) tea.Cmd {
 	return func() tea.Msg {
 		var doNow, waiting, review, done []cache.CachedPR
 		seenPRs := make(map[string]bool)
-
-		// Get current username for filtering
-		username, _ := gh.CheckAuth()
 
 		// Step 1: Search for my authored PRs (fast, cross-repo)
 		myPRs, _ := gh.SearchMyPRs()
@@ -413,7 +410,14 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "down", "j":
 			if m.viewMode == viewDetail {
-				maxThread := len(m.detailThreads) - 1
+				// Count unresolved threads only
+				unresolvedCount := 0
+				for _, t := range m.detailThreads {
+					if !t.IsResolved {
+						unresolvedCount++
+					}
+				}
+				maxThread := unresolvedCount - 1
 				if maxThread < 0 {
 					maxThread = 0
 				}
@@ -456,7 +460,7 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "R":
 			m.loading = true
 			m.err = ""
-			return m, tea.Batch(syncPRs(m.db, m.cfg), scanWorkspace(m.cfg))
+			return m, tea.Batch(syncPRs(m.db, m.cfg, m.username), scanWorkspace(m.cfg))
 		case "p":
 			if m.section == sectionWorkspace {
 				return m, m.gitPullCmd()
@@ -568,6 +572,10 @@ func (m *dashModel) openDetail() (tea.Model, tea.Cmd) {
 		if m.cursor < len(m.review) {
 			pr = &m.review[m.cursor]
 		}
+	case sectionDone:
+		if m.cursor < len(m.done) {
+			pr = &m.done[m.cursor]
+		}
 	case sectionWorkspace:
 		// Workspace items show path info and open in browser
 		if m.cursor < len(m.workspace) {
@@ -601,6 +609,31 @@ func loadDetail(pr *cache.CachedPR) tea.Cmd {
 }
 
 func (m *dashModel) openInBrowser() {
+	// In detail view, open the selected thread URL if available
+	if m.viewMode == viewDetail {
+		if m.detailPR != nil {
+			// Try to open the thread URL at the cursor
+			if len(m.detailThreads) > 0 {
+				unresolvedIdx := 0
+				for _, t := range m.detailThreads {
+					if t.IsResolved {
+						continue
+					}
+					if unresolvedIdx == m.threadCursor {
+						if len(t.Comments) > 0 {
+							gh.OpenInBrowser(t.Comments[0].URL)
+							return
+						}
+					}
+					unresolvedIdx++
+				}
+			}
+			// Fallback: open the PR URL
+			gh.OpenInBrowser(m.detailPR.URL)
+		}
+		return
+	}
+
 	switch m.section {
 	case sectionDoNow:
 		if m.cursor < len(m.doNow) {
@@ -613,6 +646,10 @@ func (m *dashModel) openInBrowser() {
 	case sectionReview:
 		if m.cursor < len(m.review) {
 			gh.OpenInBrowser(m.review[m.cursor].URL)
+		}
+	case sectionDone:
+		if m.cursor < len(m.done) {
+			gh.OpenInBrowser(m.done[m.cursor].URL)
 		}
 	case sectionWorkspace:
 		if m.cursor < len(m.workspace) {
@@ -689,11 +726,11 @@ func (m *dashModel) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return searchResultsMsg{repos: repos, err: err}
 			}
 		}
-	case "up", "k":
+	case "up":
 		if m.searchCursor > 0 {
 			m.searchCursor--
 		}
-	case "down", "j":
+	case "down":
 		if len(m.searchResults) > 0 && m.searchCursor < len(m.searchResults)-1 {
 			m.searchCursor++
 		}
@@ -808,10 +845,21 @@ func (m *dashModel) cloneCurrentPRRepo() tea.Cmd {
 }
 
 func (m *dashModel) cloneRepoCmd(repo string) tea.Cmd {
+	// Check if already exists locally
+	localPath := m.findLocalRepo(repo)
+	if localPath != "" {
+		m.statusMsg = fmt.Sprintf("✓ Already cloned at %s", localPath)
+		return nil
+	}
+
 	reposDir := m.cfg.Settings.ReposDir
 	dest := reposDir + "/" + repo
 	m.statusMsg = fmt.Sprintf("Cloning %s...", repo)
 	return func() tea.Msg {
+		// Double-check destination doesn't exist
+		if isGitRepo(dest) {
+			return cloneDoneMsg{repo: repo, path: dest, err: nil}
+		}
 		err := gh.CloneRepo(repo, dest)
 		return cloneDoneMsg{repo: repo, path: dest, err: err}
 	}
@@ -1315,11 +1363,11 @@ func (m dashModel) viewDetail() string {
 			fmt.Sprintf("  📝 Unresolved Threads (%d)", unresolved)) + "\n\n")
 
 		threadIdx := 0
-		for i, t := range m.detailThreads {
+		for _, t := range m.detailThreads {
 			if t.IsResolved {
 				continue
 			}
-			selected := i == m.threadCursor
+			selected := threadIdx == m.threadCursor
 
 			fileStr := threadFileStyle.Render(fmt.Sprintf("%s:%d", t.Path, t.Line))
 			var body string
@@ -1460,14 +1508,6 @@ func formatTimeAgo(isoTime string) string {
 		}
 	}
 	return ""
-}
-
-func timeSinceStr(isoTime string) string {
-	result := formatTimeAgo(isoTime)
-	if result == "" {
-		return ""
-	}
-	return result
 }
 
 func truncate(s string, max int) string {
