@@ -58,8 +58,19 @@ func Path() string {
 	return filepath.Join(home, ".config", "prflow", "config.yaml")
 }
 
+// pathOverride allows tests to override the config path
+var pathOverride string
+
 func Load() (*Config, error) {
-	data, err := os.ReadFile(Path())
+	p := Path()
+	if pathOverride != "" {
+		p = pathOverride
+	}
+	return loadFromPath(p)
+}
+
+func loadFromPath(p string) (*Config, error) {
+	data, err := os.ReadFile(p)
 	if err != nil {
 		return nil, err
 	}
@@ -72,6 +83,13 @@ func Load() (*Config, error) {
 
 func Save(cfg *Config) error {
 	p := Path()
+	if pathOverride != "" {
+		p = pathOverride
+	}
+	return saveToPath(cfg, p)
+}
+
+func saveToPath(cfg *Config, p string) error {
 	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
 		return err
 	}

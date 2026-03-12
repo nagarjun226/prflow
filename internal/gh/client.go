@@ -483,8 +483,4 @@ func OpenInBrowser(url string) error {
 	return cmd.Start()
 }
 
-func run(args ...string) (string, error) {
-	cmd := exec.Command("gh", args...)
-	out, err := cmd.CombinedOutput()
-	return strings.TrimSpace(string(out)), err
-}
+// run is defined in runner.go
