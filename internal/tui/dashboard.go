@@ -305,6 +305,12 @@ func syncPRs(db *cache.DB, cfg *config.Config, username string) tea.Cmd {
 			done = append(done, cached)
 		}
 
+		// Step 5: Sort each section by urgency (not just updated_at)
+		SortByUrgency(doNow)
+		SortByUrgency(waiting)
+		SortByUrgency(review)
+		// done section stays chronological (most recently merged first)
+
 		return syncDoneMsg{
 			doNow:   doNow,
 			waiting: waiting,
