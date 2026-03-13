@@ -106,8 +106,9 @@ func (r *Reviews) UnmarshalJSON(data []byte) error {
 }
 
 type Review struct {
-	Author Author `json:"author"`
-	State  string `json:"state"`
+	Author      Author `json:"author"`
+	State       string `json:"state"`
+	SubmittedAt string `json:"submittedAt"`
 }
 
 // ReviewRequests handles both array format and {nodes:[]} format

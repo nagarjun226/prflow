@@ -1319,13 +1319,24 @@ func (m dashModel) renderPRCard(pr cache.CachedPR, selected bool, width int) str
 
 	line1 := fmt.Sprintf("%s  %s  %s", repoStr, numStr, titleStr)
 
-	// Line 2: status badge + time
+	// Line 2: status badge + time + stale reviewer indicator
 	badge := m.prBadge(pr)
 	timeAgo := ""
 	if pr.UpdatedAt != "" {
 		timeAgo = wsMetaStyle.Render(fmt.Sprintf("  updated %s", formatTimeAgo(pr.UpdatedAt)))
 	}
-	line2 := badge + timeAgo
+	
+	// Add stale reviewer indicator (if any reviewer waiting 3+ days)
+	staleIndicator := ""
+	reviewerStatuses := CalculateReviewerStatus(&pr.PR)
+	if len(reviewerStatuses) > 0 {
+		stalest := reviewerStatuses[0] // already sorted by wait time descending
+		if stalest.WaitDays >= 3 {
+			staleIndicator = wsBehindStyle.Render(fmt.Sprintf("  ⏰ @%s (%dd)", stalest.Login, stalest.WaitDays))
+		}
+	}
+	
+	line2 := badge + timeAgo + staleIndicator
 
 	content := line1 + "\n" + line2
 
@@ -1497,28 +1508,16 @@ func (m dashModel) viewDetail() string {
 		}
 	}
 
-	// Reviewers
-	if len(pr.Reviews.Nodes) > 0 {
+	// Reviewers with wait times
+	reviewerStatuses := CalculateReviewerStatus(&pr.PR)
+	if len(reviewerStatuses) > 0 {
 		s.WriteString(fmt.Sprintf("\n  %s\n", detailLabelStyle.Render("Reviewers")))
-		seen := make(map[string]bool)
-		for _, rev := range pr.Reviews.Nodes {
-			if seen[rev.Author.Login] {
-				continue
-			}
-			seen[rev.Author.Login] = true
-			var icon string
-			switch rev.State {
-			case "APPROVED":
-				icon = wsCleanStyle.Render("✓")
-			case "CHANGES_REQUESTED":
-				icon = wsBehindStyle.Render("✗")
-			default:
-				icon = wsDirtyStyle.Render("💬")
-			}
-			s.WriteString(fmt.Sprintf("    %s %s  %s\n",
-				icon,
-				threadAuthorStyle.Render("@"+rev.Author.Login),
-				wsMetaStyle.Render(rev.State)))
+		for _, status := range reviewerStatuses {
+			icon := reviewerIcon(status.State)
+			nameStr := threadAuthorStyle.Render("@" + status.Login)
+			stateStr := formatReviewState(status.State)
+			waitStr := formatWaitTime(status.WaitDays, status.IsPending)
+			s.WriteString(fmt.Sprintf("    %s %s  %s  %s\n", icon, nameStr, stateStr, waitStr))
 		}
 	}
 
