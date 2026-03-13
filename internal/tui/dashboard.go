@@ -1373,7 +1373,24 @@ func (m dashModel) renderPRCard(pr cache.CachedPR, selected bool, width int) str
 func (m dashModel) prBadge(pr cache.CachedPR) string {
 	switch {
 	case pr.ReviewDecision == "APPROVED" && pr.Mergeable != "CONFLICTING":
-		return badgeMerge.Render("READY TO MERGE")
+		// Check CI status for approved PRs
+		if HasPassingCI(pr) {
+			return badgeMerge.Render("READY ✓CI")
+		} else {
+			// CI failing or pending
+			hasFailedCI := false
+			for _, check := range pr.StatusCheckRollup {
+				if check.Conclusion == "FAILURE" || check.Conclusion == "TIMED_OUT" || check.Conclusion == "ACTION_REQUIRED" {
+					hasFailedCI = true
+					break
+				}
+			}
+			if hasFailedCI {
+				return badgeConflict.Render("READY ✗CI")
+			}
+			// CI pending/in-progress
+			return badgeWaiting.Render("READY ⏳CI")
+		}
 	case pr.ReviewDecision == "APPROVED" && pr.Mergeable == "CONFLICTING":
 		return badgeConflict.Render("CONFLICT")
 	case pr.ReviewDecision == "CHANGES_REQUESTED":
