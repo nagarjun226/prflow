@@ -267,6 +267,42 @@ func TestSearchOrgReposSuccess(t *testing.T) {
 	}
 }
 
+// CapturingRunner records the arguments passed to Run for verification.
+type CapturingRunner struct {
+	Args []string
+}
+
+func (c *CapturingRunner) Run(args ...string) (string, error) {
+	c.Args = args
+	return "", nil
+}
+
+func TestNudgeReviewerArgs(t *testing.T) {
+	capture := &CapturingRunner{}
+	old := defaultRunner
+	SetRunner(capture)
+	defer SetRunner(old)
+
+	err := NudgeReviewer("org/repo", 42, "alice", 3)
+	if err != nil {
+		t.Fatalf("NudgeReviewer failed: %v", err)
+	}
+
+	// Verify correct args
+	expected := []string{
+		"pr", "comment", "42", "-R", "org/repo", "-b",
+		"@alice friendly nudge — this PR has been waiting for your review for 3 days",
+	}
+	if len(capture.Args) != len(expected) {
+		t.Fatalf("expected %d args, got %d: %v", len(expected), len(capture.Args), capture.Args)
+	}
+	for i, arg := range expected {
+		if capture.Args[i] != arg {
+			t.Errorf("arg[%d]: expected %q, got %q", i, arg, capture.Args[i])
+		}
+	}
+}
+
 func TestSearchReviewedPRsSuccess(t *testing.T) {
 	mock := NewMockRunner()
 	mock.When("search prs", `[

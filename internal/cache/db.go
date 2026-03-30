@@ -101,6 +101,14 @@ func migrate(db *sql.DB) error {
 			UNIQUE(repo, pr_number)
 		);
 
+		CREATE TABLE IF NOT EXISTS nudge_log (
+			repo TEXT,
+			pr_number INTEGER,
+			reviewer TEXT,
+			nudged_at TEXT,
+			UNIQUE(repo, pr_number, reviewer)
+		);
+
 		CREATE INDEX IF NOT EXISTS idx_prs_section_updated ON prs(section, updated_at DESC);
 		CREATE INDEX IF NOT EXISTS idx_prs_repo_number ON prs(repo, number);
 		CREATE INDEX IF NOT EXISTS idx_threads_repo_pr ON review_threads(repo, pr_number);
@@ -289,6 +297,48 @@ func (d *DB) GetAIAnalysis(repo string, prNumber int, maxAge time.Duration) (*Ca
 		return nil, nil // expired
 	}
 	return &a, nil
+}
+
+// RecordNudge records that a reviewer was nudged on a PR.
+func (d *DB) RecordNudge(repo string, prNumber int, reviewer string) error {
+	_, err := d.db.Exec(`
+		INSERT INTO nudge_log (repo, pr_number, reviewer, nudged_at)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(repo, pr_number, reviewer) DO UPDATE SET nudged_at=excluded.nudged_at
+	`, repo, prNumber, reviewer, time.Now().Format(time.RFC3339))
+	return err
+}
+
+// CanNudge returns true if the reviewer has not been nudged within the cooldown period.
+func (d *DB) CanNudge(repo string, prNumber int, reviewer string, cooldownHours int) bool {
+	var nudgedAt string
+	err := d.db.QueryRow(`
+		SELECT nudged_at FROM nudge_log
+		WHERE repo = ? AND pr_number = ? AND reviewer = ?
+	`, repo, prNumber, reviewer).Scan(&nudgedAt)
+	if err != nil {
+		// No record found — can nudge
+		return true
+	}
+	t, err := time.Parse(time.RFC3339, nudgedAt)
+	if err != nil {
+		return true
+	}
+	return time.Since(t) >= time.Duration(cooldownHours)*time.Hour
+}
+
+// OpenTestDB creates a temporary in-memory DB for testing from other packages.
+func OpenTestDB(t interface{ TempDir() string }) (*DB, error) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+	db, err := sql.Open("sqlite3", dbPath+"?_journal=WAL")
+	if err != nil {
+		return nil, err
+	}
+	if err := migrate(db); err != nil {
+		return nil, err
+	}
+	return &DB{db: db}, nil
 }
 
 func (d *DB) Close() error {

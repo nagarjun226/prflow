@@ -90,6 +90,11 @@ type dashModel struct {
 	// Stale branch delete state
 	deleteStalePending bool // true when waiting for 'd' confirmation
 
+	// Nudge state
+	nudgePending   bool   // true when waiting for confirmation
+	nudgeReviewer  string // reviewer login to nudge
+	nudgeWaitDays  int    // days waiting
+
 	// State
 	loading    bool
 	lastSync   time.Time
@@ -226,6 +231,12 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Reset delete-stale confirmation unless the key is 'd'
 		if msg.String() != "d" {
 			m.deleteStalePending = false
+		}
+		// Reset nudge confirmation unless the key is 'n'
+		if msg.String() != "n" {
+			m.nudgePending = false
+			m.nudgeReviewer = ""
+			m.nudgeWaitDays = 0
 		}
 
 		switch msg.String() {
@@ -420,6 +431,62 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.searchCursor = 0
 			m.searching = false
 			return m, nil
+		case "n":
+			// Nudge stale reviewer (only in list view for waiting/doNow sections)
+			if m.viewMode == viewList && (m.section == sectionWaiting || m.section == sectionDoNow) {
+				var pr *cache.CachedPR
+				switch m.section {
+				case sectionWaiting:
+					if m.cursor < len(m.waiting) {
+						pr = &m.waiting[m.cursor]
+					}
+				case sectionDoNow:
+					if m.cursor < len(m.doNow) {
+						pr = &m.doNow[m.cursor]
+					}
+				}
+				if pr == nil {
+					return m, nil
+				}
+
+				if m.nudgePending && m.nudgeReviewer != "" {
+					// Second press — confirm and send nudge
+					reviewer := m.nudgeReviewer
+					waitDays := m.nudgeWaitDays
+					repo := pr.Repo
+					number := pr.Number
+					db := m.db
+					m.nudgePending = false
+					m.nudgeReviewer = ""
+					m.nudgeWaitDays = 0
+					m.statusMsg = fmt.Sprintf("Nudging @%s...", reviewer)
+					return m, func() tea.Msg {
+						err := gh.NudgeReviewer(repo, number, reviewer, waitDays)
+						if err != nil {
+							return prActionDoneMsg{action: fmt.Sprintf("nudge @%s", reviewer), err: err}
+						}
+						db.RecordNudge(repo, number, reviewer)
+						return prActionDoneMsg{action: fmt.Sprintf("nudged @%s on #%d", reviewer, number), err: nil}
+					}
+				}
+
+				// First press — find stalest reviewer and check cooldown
+				statuses := CalculateReviewerStatus(&pr.PR)
+				if len(statuses) == 0 {
+					m.statusMsg = "No reviewers to nudge"
+					return m, nil
+				}
+				stalest := statuses[0]
+				if !m.db.CanNudge(pr.Repo, pr.Number, stalest.Login, 24) {
+					m.statusMsg = fmt.Sprintf("@%s was already nudged within 24h", stalest.Login)
+					return m, nil
+				}
+				m.nudgePending = true
+				m.nudgeReviewer = stalest.Login
+				m.nudgeWaitDays = stalest.WaitDays
+				m.statusMsg = fmt.Sprintf("Nudge @%s? Press 'n' again to confirm", stalest.Login)
+				return m, nil
+			}
 		case "C":
 			// Clone the repo of the selected PR
 			if m.section != sectionWorkspace {

@@ -340,3 +340,76 @@ func TestMultipleRepos(t *testing.T) {
 		t.Errorf("expected 2 PRs from different repos, got %d", len(all))
 	}
 }
+
+func TestNudgeCooldown(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	// No prior nudge — should be allowed
+	if !db.CanNudge("org/repo", 1, "alice", 24) {
+		t.Error("expected CanNudge=true when no prior nudge")
+	}
+
+	// Record a nudge
+	err := db.RecordNudge("org/repo", 1, "alice")
+	if err != nil {
+		t.Fatalf("RecordNudge failed: %v", err)
+	}
+
+	// Immediately after nudge — should be blocked (24h cooldown)
+	if db.CanNudge("org/repo", 1, "alice", 24) {
+		t.Error("expected CanNudge=false immediately after nudge")
+	}
+}
+
+func TestNudgeRecord(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	// Record nudges for different reviewers on different PRs
+	db.RecordNudge("org/repo", 1, "alice")
+	db.RecordNudge("org/repo", 1, "bob")
+	db.RecordNudge("org/repo", 2, "alice")
+
+	// alice on PR 1 should be blocked
+	if db.CanNudge("org/repo", 1, "alice", 24) {
+		t.Error("expected blocked for alice on PR 1")
+	}
+	// bob on PR 1 should be blocked
+	if db.CanNudge("org/repo", 1, "bob", 24) {
+		t.Error("expected blocked for bob on PR 1")
+	}
+	// charlie on PR 1 should be allowed (never nudged)
+	if !db.CanNudge("org/repo", 1, "charlie", 24) {
+		t.Error("expected allowed for charlie on PR 1")
+	}
+	// alice on PR 2 should be blocked
+	if db.CanNudge("org/repo", 2, "alice", 24) {
+		t.Error("expected blocked for alice on PR 2")
+	}
+}
+
+func TestCanNudgeExpired(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	// Insert a nudge record with a timestamp 25 hours in the past
+	pastTime := time.Now().Add(-25 * time.Hour).Format(time.RFC3339)
+	_, err := db.db.Exec(`
+		INSERT INTO nudge_log (repo, pr_number, reviewer, nudged_at)
+		VALUES (?, ?, ?, ?)
+	`, "org/repo", 1, "alice", pastTime)
+	if err != nil {
+		t.Fatalf("insert expired nudge failed: %v", err)
+	}
+
+	// 24h cooldown should be expired after 25h
+	if !db.CanNudge("org/repo", 1, "alice", 24) {
+		t.Error("expected CanNudge=true after cooldown expired")
+	}
+
+	// But a 48h cooldown should still block
+	if db.CanNudge("org/repo", 1, "alice", 48) {
+		t.Error("expected CanNudge=false with 48h cooldown after only 25h")
+	}
+}

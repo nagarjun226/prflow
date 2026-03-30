@@ -3,6 +3,8 @@ package tui
 import (
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/cheenu1092-oss/prflow/internal/cache"
 	"github.com/cheenu1092-oss/prflow/internal/config"
 	"github.com/cheenu1092-oss/prflow/internal/gh"
@@ -381,4 +383,99 @@ func TestViewReplyMode(t *testing.T) {
 	}
 }
 
+func TestNudgeKeybinding(t *testing.T) {
+	cfg := config.DefaultConfig()
+	db, err := cache.OpenTestDB(t)
+	if err != nil {
+		t.Fatalf("failed to open test DB: %v", err)
+	}
+	defer db.Close()
 
+	m := dashModel{
+		cfg:      cfg,
+		db:       db,
+		viewMode: viewList,
+		section:  sectionWaiting,
+		cursor:   0,
+		waiting: []cache.CachedPR{
+			{
+				PR: gh.PR{
+					Number:    10,
+					Title:     "Waiting PR",
+					CreatedAt: "2026-03-01T00:00:00Z",
+					UpdatedAt: "2026-03-10T00:00:00Z",
+					Author:    gh.Author{Login: "me"},
+					ReviewRequests: gh.ReviewRequests{
+						Nodes: []gh.ReviewRequest{
+							{RequestedReviewer: gh.Author{Login: "reviewer1"}},
+						},
+					},
+				},
+				Repo: "org/repo",
+			},
+		},
+		spinFrames: []string{"⠋"},
+	}
+
+	// First press of 'n' — should show confirmation
+	keyMsg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}}
+	updated, _ := m.Update(keyMsg)
+	um := updated.(dashModel)
+
+	if !um.nudgePending {
+		t.Error("expected nudgePending=true after first 'n' press")
+	}
+	if um.nudgeReviewer != "reviewer1" {
+		t.Errorf("expected nudgeReviewer='reviewer1', got %q", um.nudgeReviewer)
+	}
+	expectedMsg := "Nudge @reviewer1? Press 'n' again to confirm"
+	if um.statusMsg != expectedMsg {
+		t.Errorf("expected statusMsg=%q, got %q", expectedMsg, um.statusMsg)
+	}
+
+	// Non-'n' key should reset nudge state
+	escMsg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}}
+	updated2, _ := um.Update(escMsg)
+	um2 := updated2.(dashModel)
+	if um2.nudgePending {
+		t.Error("expected nudgePending=false after non-n keypress")
+	}
+
+	// Test that nudge is unavailable in review section
+	m2 := dashModel{
+		cfg:        cfg,
+		viewMode:   viewList,
+		section:    sectionReview,
+		cursor:     0,
+		review:     []cache.CachedPR{{PR: gh.PR{Number: 5}, Repo: "org/repo"}},
+		spinFrames: []string{"⠋"},
+	}
+	updated3, _ := m2.Update(keyMsg)
+	um3 := updated3.(dashModel)
+	if um3.nudgePending {
+		t.Error("expected nudge not available in review section")
+	}
+
+	// Test with no reviewers
+	m3 := dashModel{
+		cfg:      cfg,
+		viewMode: viewList,
+		section:  sectionWaiting,
+		cursor:   0,
+		waiting: []cache.CachedPR{
+			{
+				PR:   gh.PR{Number: 11, Author: gh.Author{Login: "me"}},
+				Repo: "org/repo",
+			},
+		},
+		spinFrames: []string{"⠋"},
+	}
+	updated4, _ := m3.Update(keyMsg)
+	um4 := updated4.(dashModel)
+	if um4.nudgePending {
+		t.Error("expected nudgePending=false when no reviewers")
+	}
+	if um4.statusMsg != "No reviewers to nudge" {
+		t.Errorf("expected 'No reviewers to nudge', got %q", um4.statusMsg)
+	}
+}

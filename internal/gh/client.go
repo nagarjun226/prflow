@@ -727,4 +727,11 @@ func repoName(repo string) string {
 	return repo
 }
 
+// NudgeReviewer posts a friendly nudge comment on a PR mentioning the reviewer.
+func NudgeReviewer(repo string, number int, reviewer string, waitDays int) error {
+	body := fmt.Sprintf("@%s friendly nudge — this PR has been waiting for your review for %d days", reviewer, waitDays)
+	_, err := run("pr", "comment", fmt.Sprintf("%d", number), "-R", repo, "-b", body)
+	return err
+}
+
 // run is defined in runner.go
