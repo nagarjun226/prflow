@@ -137,6 +137,86 @@ func TestSaveCreatesDirectory(t *testing.T) {
 }
 
 func contains(s, substr string) bool {
-	return filepath.Base(filepath.Dir(filepath.Dir(s))) == ".config" || 
+	return filepath.Base(filepath.Dir(filepath.Dir(s))) == ".config" ||
 		len(s) > 0 && filepath.Base(filepath.Dir(s)) == "prflow"
+}
+
+func TestParseStaleThresholdDays(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected int
+	}{
+		{"3d", 3},
+		{"5d", 5},
+		{"7d", 7},
+		{"1d", 1},
+		{"10d", 10},
+		{"3", 3},
+		{"", 3},
+		{"invalid", 3},
+		{"-5d", 3},
+		{"0d", 3},
+		{"  5d  ", 5},
+		{"5D", 5},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			result := ParseStaleThresholdDays(tt.input)
+			if result != tt.expected {
+				t.Errorf("ParseStaleThresholdDays(%q) = %d, want %d", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestValidate(t *testing.T) {
+	cfg := &Config{}
+	cfg.Validate()
+
+	if cfg.Settings.MergeMethod != "squash" {
+		t.Errorf("expected merge_method 'squash', got '%s'", cfg.Settings.MergeMethod)
+	}
+	if cfg.Settings.PageSize != 50 {
+		t.Errorf("expected page_size 50, got %d", cfg.Settings.PageSize)
+	}
+	if cfg.Settings.RefreshInterval != "2m" {
+		t.Errorf("expected refresh_interval '2m', got '%s'", cfg.Settings.RefreshInterval)
+	}
+	if cfg.Settings.StaleThreshold != "3d" {
+		t.Errorf("expected stale_threshold '3d', got '%s'", cfg.Settings.StaleThreshold)
+	}
+	if cfg.Workspace.Repos == nil {
+		t.Error("expected non-nil workspace repos map")
+	}
+}
+
+func TestValidatePreservesExisting(t *testing.T) {
+	cfg := &Config{
+		Settings: SettingsConfig{
+			MergeMethod:     "rebase",
+			PageSize:        100,
+			RefreshInterval: "5m",
+			StaleThreshold:  "7d",
+		},
+	}
+	cfg.Validate()
+
+	if cfg.Settings.MergeMethod != "rebase" {
+		t.Errorf("validate should not override merge_method, got '%s'", cfg.Settings.MergeMethod)
+	}
+	if cfg.Settings.PageSize != 100 {
+		t.Errorf("validate should not override page_size, got %d", cfg.Settings.PageSize)
+	}
+}
+
+func TestSetPathOverride(t *testing.T) {
+	SetPathOverride("/tmp/test-config.yaml")
+	defer SetPathOverride("")
+
+	// Loading from nonexistent path should fail
+	_, err := Load()
+	if err == nil {
+		t.Error("expected error loading nonexistent override path")
+	}
 }

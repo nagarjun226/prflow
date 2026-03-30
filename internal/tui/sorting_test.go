@@ -155,6 +155,43 @@ func TestSortByUrgency(t *testing.T) {
 	}
 }
 
+func TestUrgencyScoreWithCustomThreshold(t *testing.T) {
+	// With threshold 7, a reviewer waiting 5 days should not add 200 points
+	pr := cache.CachedPR{
+		PR: gh.PR{
+			CreatedAt: time.Now().Add(-6 * 24 * time.Hour).Format(time.RFC3339),
+			UpdatedAt: time.Now().Add(-6 * 24 * time.Hour).Format(time.RFC3339),
+			ReviewRequests: gh.ReviewRequests{
+				Nodes: []gh.ReviewRequest{
+					{RequestedReviewer: gh.Author{Login: "reviewer1"}},
+				},
+			},
+		},
+	}
+
+	// With default threshold (3), 6 days waiting = 300 points (threshold+2)
+	scoreDefault := UrgencyScore(pr)
+	// With threshold 7, 6 days waiting = only 100 points (< threshold)
+	scoreCustom := UrgencyScore(pr, 7)
+
+	if scoreCustom >= scoreDefault {
+		t.Errorf("custom threshold 7 should give lower score than default: got %d >= %d", scoreCustom, scoreDefault)
+	}
+}
+
+func TestSortByUrgencyWithThreshold(t *testing.T) {
+	prs := []cache.CachedPR{
+		{PR: gh.PR{Number: 1, Mergeable: "MERGEABLE"}},
+		{PR: gh.PR{Number: 2, Mergeable: "CONFLICTING"}},
+	}
+
+	SortByUrgency(prs, 5)
+
+	if prs[0].Number != 2 {
+		t.Errorf("expected conflicting PR first, got #%d", prs[0].Number)
+	}
+}
+
 func TestHasPassingCI(t *testing.T) {
 	tests := []struct {
 		name     string

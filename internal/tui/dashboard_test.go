@@ -75,7 +75,7 @@ func TestTruncateNewlines(t *testing.T) {
 }
 
 func TestPrBadge(t *testing.T) {
-	m := dashModel{}
+	m := dashModel{cfg: config.DefaultConfig()}
 
 	tests := []struct {
 		name         string
@@ -236,7 +236,7 @@ func TestHelpPair(t *testing.T) {
 }
 
 func TestRenderPRCardsEmpty(t *testing.T) {
-	m := dashModel{}
+	m := dashModel{cfg: config.DefaultConfig()}
 	result := m.renderPRCards(nil, 80)
 	if result == "" {
 		t.Error("expected non-empty empty state")
@@ -244,7 +244,7 @@ func TestRenderPRCardsEmpty(t *testing.T) {
 }
 
 func TestRenderPRCard(t *testing.T) {
-	m := dashModel{}
+	m := dashModel{cfg: config.DefaultConfig()}
 	pr := cache.CachedPR{
 		PR: gh.PR{
 			Number:         42,
@@ -270,7 +270,7 @@ func TestRenderPRCard(t *testing.T) {
 }
 
 func TestRenderWorkspaceCardsEmpty(t *testing.T) {
-	m := dashModel{}
+	m := dashModel{cfg: config.DefaultConfig()}
 	result := m.renderWorkspaceCards(80)
 	if result == "" {
 		t.Error("expected non-empty empty state")

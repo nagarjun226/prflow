@@ -41,6 +41,26 @@ func TestParseRefreshInterval(t *testing.T) {
 			input:    "invalid",
 			expected: 0,
 		},
+		{
+			name:     "bare number (minutes)",
+			input:    "5",
+			expected: 5 * time.Minute,
+		},
+		{
+			name:     "bare number 10",
+			input:    "10",
+			expected: 10 * time.Minute,
+		},
+		{
+			name:     "zero",
+			input:    "0",
+			expected: 0,
+		},
+		{
+			name:     "negative number",
+			input:    "-5",
+			expected: 0,
+		},
 	}
 
 	for _, tt := range tests {

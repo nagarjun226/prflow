@@ -252,7 +252,7 @@ func TestRenderWorkspaceCard(t *testing.T) {
 }
 
 func TestPrBadgeAllCases(t *testing.T) {
-	m := dashModel{}
+	m := dashModel{cfg: config.DefaultConfig()}
 
 	cases := []cache.CachedPR{
 		{PR: gh.PR{ReviewDecision: "APPROVED", Mergeable: "MERGEABLE"}},

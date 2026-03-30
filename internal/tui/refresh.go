@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strconv"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -35,8 +36,7 @@ func parseRefreshInterval(s string) time.Duration {
 	
 	// Fallback: assume minutes if no unit specified
 	// e.g., "2" → 2 minutes
-	var mins int
-	if _, err := time.Parse("2", s); err == nil {
+	if mins, err := strconv.Atoi(s); err == nil && mins > 0 {
 		return time.Duration(mins) * time.Minute
 	}
 	

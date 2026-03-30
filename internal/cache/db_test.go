@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 
@@ -238,6 +239,88 @@ func TestDraftPR(t *testing.T) {
 	}
 	if !prs[0].IsDraft {
 		t.Error("expected IsDraft true")
+	}
+}
+
+func TestAIAnalysisCache(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	analysis := &CachedAIAnalysis{
+		Summary:        "This PR adds authentication",
+		ActionNeeded:   "Address review comments",
+		ReviewSummary:  "2 comments, 1 requesting changes",
+		RiskLevel:      "medium",
+		SuggestedFixes: `["fix auth flow","add tests"]`,
+		BlockedBy:      "@reviewer1",
+	}
+
+	err := db.UpsertAIAnalysis("org/repo", 42, analysis)
+	if err != nil {
+		t.Fatalf("UpsertAIAnalysis failed: %v", err)
+	}
+
+	// Retrieve without TTL
+	cached, err := db.GetAIAnalysis("org/repo", 42, 0)
+	if err != nil {
+		t.Fatalf("GetAIAnalysis failed: %v", err)
+	}
+	if cached == nil {
+		t.Fatal("expected non-nil analysis")
+	}
+	if cached.Summary != "This PR adds authentication" {
+		t.Errorf("expected summary, got '%s'", cached.Summary)
+	}
+	if cached.RiskLevel != "medium" {
+		t.Errorf("expected risk_level 'medium', got '%s'", cached.RiskLevel)
+	}
+	if cached.BlockedBy != "@reviewer1" {
+		t.Errorf("expected blocked_by '@reviewer1', got '%s'", cached.BlockedBy)
+	}
+}
+
+func TestAIAnalysisCacheExpiry(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	analysis := &CachedAIAnalysis{
+		Summary: "Test analysis",
+	}
+	db.UpsertAIAnalysis("org/repo", 1, analysis)
+
+	// With very short TTL, should still be found (just inserted)
+	cached, _ := db.GetAIAnalysis("org/repo", 1, 1*time.Hour)
+	if cached == nil {
+		t.Error("expected non-nil for fresh analysis")
+	}
+}
+
+func TestAIAnalysisCacheNotFound(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	cached, err := db.GetAIAnalysis("org/nonexistent", 999, 0)
+	if err == nil && cached != nil {
+		t.Error("expected nil for non-existent analysis")
+	}
+}
+
+func TestAIAnalysisCacheUpdate(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	analysis1 := &CachedAIAnalysis{Summary: "First analysis"}
+	db.UpsertAIAnalysis("org/repo", 42, analysis1)
+
+	analysis2 := &CachedAIAnalysis{Summary: "Updated analysis"}
+	db.UpsertAIAnalysis("org/repo", 42, analysis2)
+
+	cached, _ := db.GetAIAnalysis("org/repo", 42, 0)
+	if cached == nil {
+		t.Fatal("expected non-nil analysis")
+	}
+	if cached.Summary != "Updated analysis" {
+		t.Errorf("expected updated summary, got '%s'", cached.Summary)
 	}
 }
 

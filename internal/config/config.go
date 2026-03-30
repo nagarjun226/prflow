@@ -3,6 +3,8 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -61,6 +63,11 @@ func Path() string {
 // pathOverride allows tests to override the config path
 var pathOverride string
 
+// SetPathOverride sets the config path override for testing
+func SetPathOverride(p string) {
+	pathOverride = p
+}
+
 func Load() (*Config, error) {
 	p := Path()
 	if pathOverride != "" {
@@ -87,6 +94,40 @@ func Save(cfg *Config) error {
 		p = pathOverride
 	}
 	return saveToPath(cfg, p)
+}
+
+// ParseStaleThresholdDays parses the stale_threshold config string (e.g. "3d", "5d")
+// and returns the number of days. Returns the default of 3 if parsing fails.
+func ParseStaleThresholdDays(s string) int {
+	if s == "" {
+		return 3
+	}
+	s = strings.TrimSpace(strings.ToLower(s))
+	s = strings.TrimSuffix(s, "d")
+	days, err := strconv.Atoi(s)
+	if err != nil || days <= 0 {
+		return 3
+	}
+	return days
+}
+
+// Validate checks for common config issues and applies defaults where needed.
+func (c *Config) Validate() {
+	if c.Settings.MergeMethod == "" {
+		c.Settings.MergeMethod = "squash"
+	}
+	if c.Settings.PageSize <= 0 {
+		c.Settings.PageSize = 50
+	}
+	if c.Settings.RefreshInterval == "" {
+		c.Settings.RefreshInterval = "2m"
+	}
+	if c.Settings.StaleThreshold == "" {
+		c.Settings.StaleThreshold = "3d"
+	}
+	if c.Workspace.Repos == nil {
+		c.Workspace.Repos = make(map[string]string)
+	}
 }
 
 func saveToPath(cfg *Config, p string) error {

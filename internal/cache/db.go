@@ -86,6 +86,25 @@ func migrate(db *sql.DB) error {
 			repo TEXT PRIMARY KEY,
 			added_at TEXT
 		);
+
+		CREATE TABLE IF NOT EXISTS ai_analyses (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			repo TEXT NOT NULL,
+			pr_number INTEGER NOT NULL,
+			summary TEXT,
+			action_needed TEXT,
+			review_summary TEXT,
+			risk_level TEXT,
+			suggested_fixes TEXT,
+			blocked_by TEXT,
+			analyzed_at TEXT,
+			UNIQUE(repo, pr_number)
+		);
+
+		CREATE INDEX IF NOT EXISTS idx_prs_section_updated ON prs(section, updated_at DESC);
+		CREATE INDEX IF NOT EXISTS idx_prs_repo_number ON prs(repo, number);
+		CREATE INDEX IF NOT EXISTS idx_threads_repo_pr ON review_threads(repo, pr_number);
+		CREATE INDEX IF NOT EXISTS idx_ai_repo_pr ON ai_analyses(repo, pr_number);
 	`)
 	return err
 }
@@ -216,6 +235,60 @@ func (d *DB) GetFavorites() ([]string, error) {
 		}
 	}
 	return favs, nil
+}
+
+// CachedAIAnalysis represents a cached AI analysis for a PR
+type CachedAIAnalysis struct {
+	Repo           string
+	PRNumber       int
+	Summary        string
+	ActionNeeded   string
+	ReviewSummary  string
+	RiskLevel      string
+	SuggestedFixes string // JSON array stored as string
+	BlockedBy      string
+	AnalyzedAt     time.Time
+}
+
+// UpsertAIAnalysis stores or updates an AI analysis for a PR
+func (d *DB) UpsertAIAnalysis(repo string, prNumber int, analysis *CachedAIAnalysis) error {
+	_, err := d.db.Exec(`
+		INSERT INTO ai_analyses (repo, pr_number, summary, action_needed, review_summary,
+			risk_level, suggested_fixes, blocked_by, analyzed_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(repo, pr_number) DO UPDATE SET
+			summary=excluded.summary, action_needed=excluded.action_needed,
+			review_summary=excluded.review_summary, risk_level=excluded.risk_level,
+			suggested_fixes=excluded.suggested_fixes, blocked_by=excluded.blocked_by,
+			analyzed_at=excluded.analyzed_at
+	`, repo, prNumber, analysis.Summary, analysis.ActionNeeded, analysis.ReviewSummary,
+		analysis.RiskLevel, analysis.SuggestedFixes, analysis.BlockedBy,
+		time.Now().Format(time.RFC3339))
+	return err
+}
+
+// GetAIAnalysis retrieves a cached AI analysis. Returns nil if not found or expired.
+// maxAge controls how old a cached analysis can be (0 = no expiry).
+func (d *DB) GetAIAnalysis(repo string, prNumber int, maxAge time.Duration) (*CachedAIAnalysis, error) {
+	var a CachedAIAnalysis
+	var analyzedAt string
+	err := d.db.QueryRow(`
+		SELECT repo, pr_number, summary, action_needed, review_summary,
+			risk_level, suggested_fixes, blocked_by, analyzed_at
+		FROM ai_analyses WHERE repo = ? AND pr_number = ?
+	`, repo, prNumber).Scan(
+		&a.Repo, &a.PRNumber, &a.Summary, &a.ActionNeeded, &a.ReviewSummary,
+		&a.RiskLevel, &a.SuggestedFixes, &a.BlockedBy, &analyzedAt)
+	if err != nil {
+		return nil, err
+	}
+	a.AnalyzedAt, _ = time.Parse(time.RFC3339, analyzedAt)
+
+	// Check expiry
+	if maxAge > 0 && time.Since(a.AnalyzedAt) > maxAge {
+		return nil, nil // expired
+	}
+	return &a, nil
 }
 
 func (d *DB) Close() error {

@@ -16,6 +16,7 @@ func setupGitRepo(t *testing.T) string {
 		{"git", "-C", dir, "init"},
 		{"git", "-C", dir, "config", "user.email", "test@test.com"},
 		{"git", "-C", dir, "config", "user.name", "Test"},
+		{"git", "-C", dir, "config", "commit.gpgsign", "false"},
 	}
 	for _, args := range cmds {
 		cmd := exec.Command(args[0], args[1:]...)
@@ -24,9 +25,9 @@ func setupGitRepo(t *testing.T) string {
 		}
 	}
 
-	// Create a file and commit
+	// Create a file and commit (use explicit file name, not "." to avoid picking up extra files)
 	os.WriteFile(filepath.Join(dir, "README.md"), []byte("# Test"), 0644)
-	exec.Command("git", "-C", dir, "add", ".").Run()
+	exec.Command("git", "-C", dir, "add", "README.md").Run()
 	exec.Command("git", "-C", dir, "commit", "-m", "initial commit").Run()
 
 	return dir
