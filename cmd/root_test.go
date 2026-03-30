@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,23 @@ import (
 func TestPrintUsage(t *testing.T) {
 	// Should not panic
 	printUsage()
+}
+
+func TestPrintUsageContainsWatch(t *testing.T) {
+	// Capture stdout
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	printUsage()
+
+	w.Close()
+	os.Stdout = old
+
+	out, _ := io.ReadAll(r)
+	if !strings.Contains(string(out), "watch") {
+		t.Error("expected 'watch' in usage output")
+	}
 }
 
 func TestRunConfig(t *testing.T) {
