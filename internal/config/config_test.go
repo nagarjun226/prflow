@@ -30,6 +30,9 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Settings.PageSize != 50 {
 		t.Errorf("expected page_size 50, got %d", cfg.Settings.PageSize)
 	}
+	if cfg.Settings.Theme != "auto" {
+		t.Errorf("expected theme 'auto', got '%s'", cfg.Settings.Theme)
+	}
 	if len(cfg.Workspace.ScanDirs) != 4 {
 		t.Errorf("expected 4 scan dirs, got %d", len(cfg.Workspace.ScanDirs))
 	}
@@ -72,6 +75,7 @@ func TestSaveAndLoad(t *testing.T) {
 	cfg.Favorites = []string{"org/repo1"}
 	cfg.Settings.Editor = "nvim"
 	cfg.Settings.MergeMethod = "rebase"
+	cfg.Settings.Theme = "dark"
 	cfg.Workspace.Repos = map[string]string{
 		"org/repo1": "/home/user/repos/repo1",
 	}
@@ -109,8 +113,35 @@ func TestSaveAndLoad(t *testing.T) {
 	if loaded.Settings.MergeMethod != "rebase" {
 		t.Errorf("expected merge_method 'rebase', got '%s'", loaded.Settings.MergeMethod)
 	}
+	if loaded.Settings.Theme != "dark" {
+		t.Errorf("expected theme 'dark', got '%s'", loaded.Settings.Theme)
+	}
 	if loaded.Workspace.Repos["org/repo1"] != "/home/user/repos/repo1" {
 		t.Errorf("expected workspace repo path, got '%s'", loaded.Workspace.Repos["org/repo1"])
+	}
+}
+
+func TestThemeConfigRoundTrip(t *testing.T) {
+	tmpDir := t.TempDir()
+	testPath := filepath.Join(tmpDir, "config.yaml")
+
+	for _, theme := range []string{"auto", "dark", "light"} {
+		cfg := DefaultConfig()
+		cfg.Settings.Theme = theme
+
+		err := saveToPath(cfg, testPath)
+		if err != nil {
+			t.Fatalf("Save failed for theme %q: %v", theme, err)
+		}
+
+		loaded, err := loadFromPath(testPath)
+		if err != nil {
+			t.Fatalf("Load failed for theme %q: %v", theme, err)
+		}
+
+		if loaded.Settings.Theme != theme {
+			t.Errorf("expected theme %q, got %q", theme, loaded.Settings.Theme)
+		}
 	}
 }
 

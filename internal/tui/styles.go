@@ -5,259 +5,369 @@ import (
 )
 
 // ─── Color Palette ──────────────────────────────────────────
-// Inspired by Tokyo Night / Catppuccin — dark, readable, purposeful
+// Colors are derived from CurrentTheme. Call ApplyTheme to reinitialise.
 var (
 	// Base colors
-	colorBg        = lipgloss.Color("#1a1b26")
-	colorSurface   = lipgloss.Color("#24283b")
-	colorOverlay   = lipgloss.Color("#414868")
-	colorBorder    = lipgloss.Color("#3b4261")
-	colorBorderFoc = lipgloss.Color("#7aa2f7") // focused border
-	colorText      = lipgloss.Color("#c0caf5")
-	colorSubtext   = lipgloss.Color("#565f89")
-	colorMuted     = lipgloss.Color("#444b6a")
+	colorBg        lipgloss.Color
+	colorSurface   lipgloss.Color
+	colorOverlay   lipgloss.Color
+	colorBorder    lipgloss.Color
+	colorBorderFoc lipgloss.Color
+	colorText      lipgloss.Color
+	colorSubtext   lipgloss.Color
+	colorMuted     lipgloss.Color
 
 	// Semantic colors
-	colorPrimary = lipgloss.Color("#7aa2f7") // blue — primary actions
-	colorSuccess = lipgloss.Color("#9ece6a") // green — approved, clean
-	colorWarning = lipgloss.Color("#e0af68") // yellow — waiting, stale
-	colorDanger  = lipgloss.Color("#f7768e") // red — conflicts, changes req
-	colorInfo    = lipgloss.Color("#7dcfff") // cyan — info, links
-	colorAccent  = lipgloss.Color("#ff9e64") // orange — favorites
-	colorPurple  = lipgloss.Color("#bb9af7") // purple — PR numbers
-	colorWhite   = lipgloss.Color("#c0caf5")
+	colorPrimary lipgloss.Color
+	colorSuccess lipgloss.Color
+	colorWarning lipgloss.Color
+	colorDanger  lipgloss.Color
+	colorInfo    lipgloss.Color
+	colorAccent  lipgloss.Color
+	colorPurple  lipgloss.Color
+	colorWhite   lipgloss.Color
 
 	// ─── Layout ─────────────────────────────────────────────
 
-	// Header bar (full width)
+	headerStyle    lipgloss.Style
+	sidebarStyle   lipgloss.Style
+	mainPanelStyle lipgloss.Style
+
+	// ─── Sidebar Items ──────────────────────────────────────
+
+	sidebarSectionStyle lipgloss.Style
+	sidebarActiveStyle  lipgloss.Style
+	sidebarCountStyle   lipgloss.Style
+	favHeaderStyle      lipgloss.Style
+	favItemStyle        lipgloss.Style
+
+	// ─── Section Headers ────────────────────────────────────
+
+	sectionHeader lipgloss.Style
+
+	// ─── PR Items ───────────────────────────────────────────
+
+	prCardStyle         lipgloss.Style
+	prCardSelectedStyle lipgloss.Style
+	prRepoStyle         lipgloss.Style
+	prNumberStyle       lipgloss.Style
+	prTitleStyle        lipgloss.Style
+	prTitleSelectedStyle lipgloss.Style
+
+	// ─── Status Badges ──────────────────────────────────────
+
+	badgeChanges  lipgloss.Style
+	badgeConflict lipgloss.Style
+	badgeWaiting  lipgloss.Style
+	badgeDraft    lipgloss.Style
+	badgeMerge    lipgloss.Style
+
+	// ─── Workspace ──────────────────────────────────────────
+
+	wsCardStyle         lipgloss.Style
+	wsCardSelectedStyle lipgloss.Style
+	wsCleanStyle        lipgloss.Style
+	wsDirtyStyle        lipgloss.Style
+	wsBehindStyle       lipgloss.Style
+	wsMetaStyle         lipgloss.Style
+
+	// ─── Detail View ────────────────────────────────────────
+
+	detailLabelStyle       lipgloss.Style
+	detailValueStyle       lipgloss.Style
+	threadHeaderStyle      lipgloss.Style
+	threadCardStyle        lipgloss.Style
+	threadCardSelectedStyle lipgloss.Style
+	threadAuthorStyle      lipgloss.Style
+	threadBodyStyle        lipgloss.Style
+	threadFileStyle        lipgloss.Style
+
+	// ─── URL & Links ────────────────────────────────────────
+
+	urlStyle lipgloss.Style
+
+	// ─── Help Bar ───────────────────────────────────────────
+
+	helpStyle     lipgloss.Style
+	helpKeyStyle  lipgloss.Style
+	helpDescStyle lipgloss.Style
+
+	// ─── Status Bar ─────────────────────────────────────────
+
+	statusBarStyle   lipgloss.Style
+	statusErrorStyle lipgloss.Style
+
+	// ─── Empty State ────────────────────────────────────────
+
+	emptyStyle lipgloss.Style
+
+	// Legacy aliases
+	statusApproved      lipgloss.Style
+	statusChanges       lipgloss.Style
+	statusPending       lipgloss.Style
+	statusClean         lipgloss.Style
+	statusDirty         lipgloss.Style
+	statusBehind        lipgloss.Style
+	repoStyle           lipgloss.Style
+	titleStyle          lipgloss.Style
+	prItemStyle         lipgloss.Style
+	prItemSelectedStyle lipgloss.Style
+)
+
+func init() {
+	ApplyTheme(CurrentTheme)
+}
+
+// ApplyTheme reinitialises all style variables from the given theme.
+func ApplyTheme(t Theme) {
+	// Base colors
+	colorBg = t.Bg
+	colorSurface = t.Surface
+	colorOverlay = t.Overlay
+	colorBorder = t.Border
+	colorBorderFoc = t.BorderFocus
+	colorText = t.Text
+	colorSubtext = t.Subtext
+	colorMuted = t.Muted
+
+	// Semantic colors
+	colorPrimary = t.Primary
+	colorSuccess = t.Success
+	colorWarning = t.Warning
+	colorDanger = t.Danger
+	colorInfo = t.Info
+	colorAccent = t.Accent
+	colorPurple = t.Purple
+	colorWhite = t.Text // maps to theme text color
+
+	// ─── Layout ─────────────────────────────────────────────
+
 	headerStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("#1a1b26")).
-			Background(colorPrimary).
-			Padding(0, 2)
+		Bold(true).
+		Foreground(t.Bg).
+		Background(t.Primary).
+		Padding(0, 2)
 
-	// Sidebar container
 	sidebarStyle = lipgloss.NewStyle().
-			Width(26).
-			Padding(1, 1, 1, 1).
-			BorderRight(true).
-			BorderStyle(lipgloss.NormalBorder()).
-			BorderForeground(colorBorder)
+		Width(26).
+		Padding(1, 1, 1, 1).
+		BorderRight(true).
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(t.Border)
 
-	// Main panel container
 	mainPanelStyle = lipgloss.NewStyle().
-			Padding(1, 2)
+		Padding(1, 2)
 
 	// ─── Sidebar Items ──────────────────────────────────────
 
 	sidebarSectionStyle = lipgloss.NewStyle().
-				Foreground(colorSubtext).
-				PaddingLeft(1)
+		Foreground(t.Subtext).
+		PaddingLeft(1)
 
 	sidebarActiveStyle = lipgloss.NewStyle().
-				Foreground(colorPrimary).
-				Bold(true).
-				PaddingLeft(0)
+		Foreground(t.Primary).
+		Bold(true).
+		PaddingLeft(0)
 
 	sidebarCountStyle = lipgloss.NewStyle().
-				Foreground(colorMuted)
+		Foreground(t.Muted)
 
 	favHeaderStyle = lipgloss.NewStyle().
-			Foreground(colorAccent).
-			Bold(true).
-			MarginTop(1).
-			PaddingLeft(1)
+		Foreground(t.Accent).
+		Bold(true).
+		MarginTop(1).
+		PaddingLeft(1)
 
 	favItemStyle = lipgloss.NewStyle().
-			Foreground(colorSubtext).
-			PaddingLeft(3)
+		Foreground(t.Subtext).
+		PaddingLeft(3)
 
 	// ─── Section Headers ────────────────────────────────────
 
 	sectionHeader = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(colorWhite).
-			BorderBottom(true).
-			BorderStyle(lipgloss.NormalBorder()).
-			BorderForeground(colorBorder).
-			MarginBottom(1).
-			PaddingBottom(0)
+		Bold(true).
+		Foreground(t.Text).
+		BorderBottom(true).
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(t.Border).
+		MarginBottom(1).
+		PaddingBottom(0)
 
 	// ─── PR Items ───────────────────────────────────────────
 
 	prCardStyle = lipgloss.NewStyle().
-			BorderLeft(true).
-			BorderStyle(lipgloss.ThickBorder()).
-			BorderForeground(colorBorder).
-			PaddingLeft(1).
-			MarginBottom(1)
+		BorderLeft(true).
+		BorderStyle(lipgloss.ThickBorder()).
+		BorderForeground(t.Border).
+		PaddingLeft(1).
+		MarginBottom(1)
 
 	prCardSelectedStyle = lipgloss.NewStyle().
-				BorderLeft(true).
-				BorderStyle(lipgloss.ThickBorder()).
-				BorderForeground(colorPrimary).
-				PaddingLeft(1).
-				MarginBottom(1)
+		BorderLeft(true).
+		BorderStyle(lipgloss.ThickBorder()).
+		BorderForeground(t.Primary).
+		PaddingLeft(1).
+		MarginBottom(1)
 
 	prRepoStyle = lipgloss.NewStyle().
-			Foreground(colorSubtext)
+		Foreground(t.Subtext)
 
 	prNumberStyle = lipgloss.NewStyle().
-			Foreground(colorPurple).
-			Bold(true)
+		Foreground(t.Purple).
+		Bold(true)
 
 	prTitleStyle = lipgloss.NewStyle().
-			Foreground(colorWhite)
+		Foreground(t.Text)
 
 	prTitleSelectedStyle = lipgloss.NewStyle().
-				Foreground(colorPrimary).
-				Bold(true)
+		Foreground(t.Primary).
+		Bold(true)
 
 	// ─── Status Badges ──────────────────────────────────────
 
 	badgeChanges = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#1a1b26")).
-			Background(colorDanger).
-			Padding(0, 1).
-			Bold(true)
+		Foreground(t.Bg).
+		Background(t.Danger).
+		Padding(0, 1).
+		Bold(true)
 
 	badgeConflict = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#1a1b26")).
-			Background(colorDanger).
-			Padding(0, 1).
-			Bold(true)
+		Foreground(t.Bg).
+		Background(t.Danger).
+		Padding(0, 1).
+		Bold(true)
 
 	badgeWaiting = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#1a1b26")).
-			Background(colorWarning).
-			Padding(0, 1)
+		Foreground(t.Bg).
+		Background(t.Warning).
+		Padding(0, 1)
 
 	badgeDraft = lipgloss.NewStyle().
-			Foreground(colorSubtext).
-			Border(lipgloss.NormalBorder()).
-			BorderForeground(colorMuted).
-			Padding(0, 1)
+		Foreground(t.Subtext).
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(t.Muted).
+		Padding(0, 1)
 
 	badgeMerge = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#1a1b26")).
-			Background(colorSuccess).
-			Padding(0, 1).
-			Bold(true)
+		Foreground(t.Bg).
+		Background(t.Success).
+		Padding(0, 1).
+		Bold(true)
 
 	// ─── Workspace ──────────────────────────────────────────
 
 	wsCardStyle = lipgloss.NewStyle().
-			BorderLeft(true).
-			BorderStyle(lipgloss.ThickBorder()).
-			BorderForeground(colorBorder).
-			PaddingLeft(1).
-			MarginBottom(1)
+		BorderLeft(true).
+		BorderStyle(lipgloss.ThickBorder()).
+		BorderForeground(t.Border).
+		PaddingLeft(1).
+		MarginBottom(1)
 
 	wsCardSelectedStyle = lipgloss.NewStyle().
-				BorderLeft(true).
-				BorderStyle(lipgloss.ThickBorder()).
-				BorderForeground(colorPrimary).
-				PaddingLeft(1).
-				MarginBottom(1)
+		BorderLeft(true).
+		BorderStyle(lipgloss.ThickBorder()).
+		BorderForeground(t.Primary).
+		PaddingLeft(1).
+		MarginBottom(1)
 
 	wsCleanStyle = lipgloss.NewStyle().
-			Foreground(colorSuccess)
+		Foreground(t.Success)
 
 	wsDirtyStyle = lipgloss.NewStyle().
-			Foreground(colorWarning)
+		Foreground(t.Warning)
 
 	wsBehindStyle = lipgloss.NewStyle().
-			Foreground(colorDanger)
+		Foreground(t.Danger)
 
 	wsMetaStyle = lipgloss.NewStyle().
-			Foreground(colorSubtext)
+		Foreground(t.Subtext)
 
 	// ─── Detail View ────────────────────────────────────────
 
 	detailLabelStyle = lipgloss.NewStyle().
-				Foreground(colorSubtext).
-				Width(16)
+		Foreground(t.Subtext).
+		Width(16)
 
 	detailValueStyle = lipgloss.NewStyle().
-				Foreground(colorWhite)
+		Foreground(t.Text)
 
 	threadHeaderStyle = lipgloss.NewStyle().
-				Foreground(colorPrimary).
-				Bold(true).
-				MarginTop(1)
+		Foreground(t.Primary).
+		Bold(true).
+		MarginTop(1)
 
 	threadCardStyle = lipgloss.NewStyle().
-			BorderLeft(true).
-			BorderStyle(lipgloss.NormalBorder()).
-			BorderForeground(colorWarning).
-			PaddingLeft(1).
-			MarginBottom(1)
+		BorderLeft(true).
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(t.Warning).
+		PaddingLeft(1).
+		MarginBottom(1)
 
 	threadCardSelectedStyle = lipgloss.NewStyle().
-				BorderLeft(true).
-				BorderStyle(lipgloss.ThickBorder()).
-				BorderForeground(colorPrimary).
-				PaddingLeft(1).
-				MarginBottom(1)
+		BorderLeft(true).
+		BorderStyle(lipgloss.ThickBorder()).
+		BorderForeground(t.Primary).
+		PaddingLeft(1).
+		MarginBottom(1)
 
 	threadAuthorStyle = lipgloss.NewStyle().
-				Foreground(colorInfo).
-				Bold(true)
+		Foreground(t.Info).
+		Bold(true)
 
 	threadBodyStyle = lipgloss.NewStyle().
-			Foreground(colorText)
+		Foreground(t.Text)
 
 	threadFileStyle = lipgloss.NewStyle().
-			Foreground(colorPurple)
+		Foreground(t.Purple)
 
 	// ─── URL & Links ────────────────────────────────────────
 
 	urlStyle = lipgloss.NewStyle().
-			Foreground(colorInfo).
-			Italic(true)
+		Foreground(t.Info).
+		Italic(true)
 
 	// ─── Help Bar ───────────────────────────────────────────
 
 	helpStyle = lipgloss.NewStyle().
-			Foreground(colorMuted).
-			MarginTop(1)
+		Foreground(t.Muted).
+		MarginTop(1)
 
 	helpKeyStyle = lipgloss.NewStyle().
-			Foreground(colorSubtext).
-			Bold(true)
+		Foreground(t.Subtext).
+		Bold(true)
 
 	helpDescStyle = lipgloss.NewStyle().
-			Foreground(colorMuted)
+		Foreground(t.Muted)
 
 	// ─── Status Bar ─────────────────────────────────────────
 
 	statusBarStyle = lipgloss.NewStyle().
-			Foreground(colorInfo)
+		Foreground(t.Info)
 
 	statusErrorStyle = lipgloss.NewStyle().
-				Foreground(colorDanger)
+		Foreground(t.Danger)
 
 	// ─── Empty State ────────────────────────────────────────
 
 	emptyStyle = lipgloss.NewStyle().
-			Foreground(colorSubtext).
-			Italic(true).
-			PaddingLeft(2).
-			PaddingTop(1)
+		Foreground(t.Subtext).
+		Italic(true).
+		PaddingLeft(2).
+		PaddingTop(1)
 
-	// Legacy aliases (keep old code working)
-	statusApproved = lipgloss.NewStyle().Foreground(colorSuccess).Bold(true)
-	statusChanges  = lipgloss.NewStyle().Foreground(colorDanger).Bold(true)
-	statusPending  = lipgloss.NewStyle().Foreground(colorWarning)
-	statusClean    = lipgloss.NewStyle().Foreground(colorSuccess)
-	statusDirty    = lipgloss.NewStyle().Foreground(colorWarning)
-	statusBehind   = lipgloss.NewStyle().Foreground(colorDanger)
-	repoStyle      = lipgloss.NewStyle().Foreground(colorSubtext)
-	titleStyle     = lipgloss.NewStyle().Bold(true).Foreground(colorPrimary)
+	// Legacy aliases
+	statusApproved = lipgloss.NewStyle().Foreground(t.Success).Bold(true)
+	statusChanges = lipgloss.NewStyle().Foreground(t.Danger).Bold(true)
+	statusPending = lipgloss.NewStyle().Foreground(t.Warning)
+	statusClean = lipgloss.NewStyle().Foreground(t.Success)
+	statusDirty = lipgloss.NewStyle().Foreground(t.Warning)
+	statusBehind = lipgloss.NewStyle().Foreground(t.Danger)
+	repoStyle = lipgloss.NewStyle().Foreground(t.Subtext)
+	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(t.Primary)
 
-	prItemStyle         = lipgloss.NewStyle()
-	prItemSelectedStyle = lipgloss.NewStyle().Bold(true).Foreground(colorPrimary)
-)
+	prItemStyle = lipgloss.NewStyle()
+	prItemSelectedStyle = lipgloss.NewStyle().Bold(true).Foreground(t.Primary)
+}
 
 // Helper to render a key-desc help pair
 func helpPair(key, desc string) string {
