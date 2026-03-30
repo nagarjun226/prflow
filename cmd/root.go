@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -42,6 +44,8 @@ func Execute() error {
 			return runDoctor()
 		case "watch":
 			return runWatch()
+		case "open":
+			return runOpen()
 		default:
 			fmt.Printf("Unknown command: %s\n", os.Args[1])
 			printUsage()
@@ -72,9 +76,158 @@ func runSync() error {
 	if err != nil {
 		return fmt.Errorf("no config found, run 'prflow setup' first")
 	}
-	_ = cfg
-	fmt.Println("Sync complete.")
+
+	db, err := cache.Open()
+	if err != nil {
+		return fmt.Errorf("failed to open cache: %w", err)
+	}
+	defer db.Close()
+
+	username, _ := gh.CheckAuth()
+
+	myPRs, _ := gh.SearchMyPRs()
+	repoSet := make(map[string]bool)
+	for _, pr := range myPRs {
+		if pr.Repository.NameWithOwner != "" {
+			repoSet[pr.Repository.NameWithOwner] = true
+		}
+	}
+	for _, repo := range cfg.Repos {
+		repoSet[repo] = true
+	}
+
+	synced := 0
+	for repo := range repoSet {
+		repoPRs, err := gh.ListPRsForRepo(repo)
+		if err != nil {
+			fmt.Printf("  ✗ %s: %v\n", repo, err)
+			continue
+		}
+		for i := range repoPRs {
+			pr := &repoPRs[i]
+			section := classifyPR(pr, username)
+			db.UpsertPR(pr, repo, section)
+			synced++
+		}
+		fmt.Printf("  ✓ %s (%d PRs)\n", repo, len(repoPRs))
+	}
+
+	reviewPRs, _ := gh.SearchReviewRequests()
+	for i := range reviewPRs {
+		pr := &reviewPRs[i]
+		db.UpsertPR(pr, pr.Repository.NameWithOwner, "review")
+		synced++
+	}
+
+	fmt.Printf("Sync complete: %d PRs cached across %d repos.\n", synced, len(repoSet))
 	return nil
+}
+
+// classifyPR determines which section a PR belongs in.
+func classifyPR(pr *gh.PR, username string) string {
+	if strings.EqualFold(pr.Author.Login, username) {
+		switch {
+		case pr.ReviewDecision == "CHANGES_REQUESTED":
+			return "do_now"
+		case pr.ReviewDecision == "APPROVED":
+			return "do_now"
+		case pr.Mergeable == "CONFLICTING":
+			return "do_now"
+		default:
+			return "waiting"
+		}
+	}
+	return "review"
+}
+
+// openArgs holds the parsed result of a prflow open argument.
+type openArgs struct {
+	Repo   string
+	Number int
+}
+
+// parseOpenArgs parses the argument to prflow open.
+func parseOpenArgs(arg string) (openArgs, error) {
+	if arg == "" {
+		return openArgs{}, nil
+	}
+	if idx := strings.Index(arg, "#"); idx >= 0 {
+		numStr := arg[idx+1:]
+		repo := arg[:idx]
+		if numStr == "" {
+			return openArgs{}, fmt.Errorf("missing PR number after #")
+		}
+		n, err := strconv.Atoi(numStr)
+		if err != nil || n <= 0 {
+			return openArgs{}, fmt.Errorf("invalid PR number: %s", numStr)
+		}
+		return openArgs{Repo: repo, Number: n}, nil
+	}
+	if strings.Contains(arg, "/") {
+		return openArgs{Repo: arg, Number: 0}, nil
+	}
+	return openArgs{}, fmt.Errorf("invalid argument: %s (expected org/repo, #number, or org/repo#number)", arg)
+}
+
+// repoFromRemote infers the "org/repo" from the current directory's git remote.
+var repoFromRemote = func() (string, error) {
+	out, err := exec.Command("git", "remote", "get-url", "origin").Output()
+	if err != nil {
+		return "", fmt.Errorf("could not detect repo from git remote: %w", err)
+	}
+	return parseRepoFromURL(strings.TrimSpace(string(out)))
+}
+
+// parseRepoFromURL extracts "org/repo" from a git remote URL.
+func parseRepoFromURL(rawURL string) (string, error) {
+	u := rawURL
+	if strings.HasPrefix(u, "git@") {
+		u = strings.TrimPrefix(u, "git@")
+		if i := strings.Index(u, ":"); i >= 0 {
+			u = u[i+1:]
+		}
+		u = strings.TrimSuffix(u, ".git")
+		if strings.Contains(u, "/") {
+			return u, nil
+		}
+	}
+	u = strings.TrimSuffix(u, ".git")
+	parts := strings.Split(u, "/")
+	if len(parts) >= 2 {
+		return parts[len(parts)-2] + "/" + parts[len(parts)-1], nil
+	}
+	return "", fmt.Errorf("could not parse repo from URL: %s", rawURL)
+}
+
+func runOpen() error {
+	arg := ""
+	if len(os.Args) > 2 {
+		arg = os.Args[2]
+	}
+
+	parsed, err := parseOpenArgs(arg)
+	if err != nil {
+		return err
+	}
+
+	repo := parsed.Repo
+	if repo == "" {
+		inferred, err := repoFromRemote()
+		if err != nil {
+			return err
+		}
+		repo = inferred
+	}
+
+	var url string
+	if parsed.Number > 0 {
+		url = fmt.Sprintf("https://github.com/%s/pull/%d", repo, parsed.Number)
+	} else {
+		url = fmt.Sprintf("https://github.com/%s/pulls", repo)
+	}
+
+	fmt.Printf("Opening %s\n", url)
+	return gh.OpenInBrowser(url)
 }
 
 // hasFlag checks whether flag appears in args.
@@ -297,6 +450,7 @@ Commands:
   sync      Force refresh PR cache
   ls        Quick list (no TUI)
   config    Show config path
+  open      Open PR in browser (org/repo#42, #42, org/repo)
   doctor    Check dependencies (gh, git, claude)
   watch     Background mode with OS notifications
   version   Print version`)
