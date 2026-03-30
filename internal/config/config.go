@@ -29,6 +29,7 @@ type SettingsConfig struct {
 	MergeMethod     string `yaml:"merge_method"`
 	PageSize        int    `yaml:"page_size"`
 	Theme           string `yaml:"theme"`
+	WatchInterval   string `yaml:"watch_interval"`
 }
 
 func DefaultConfig() *Config {
@@ -53,6 +54,7 @@ func DefaultConfig() *Config {
 			MergeMethod:     "squash",
 			PageSize:        50,
 			Theme:           "auto",
+			WatchInterval:   "2m",
 		},
 	}
 }

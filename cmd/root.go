@@ -1,17 +1,23 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/cheenu1092-oss/prflow/internal/ai"
 	"github.com/cheenu1092-oss/prflow/internal/cache"
 	"github.com/cheenu1092-oss/prflow/internal/config"
 	"github.com/cheenu1092-oss/prflow/internal/deps"
+	"github.com/cheenu1092-oss/prflow/internal/gh"
 	"github.com/cheenu1092-oss/prflow/internal/tui"
+	"github.com/cheenu1092-oss/prflow/internal/watch"
 )
 
 func Execute() error {
@@ -31,6 +37,8 @@ func Execute() error {
 			return runConfig()
 		case "doctor":
 			return runDoctor()
+		case "watch":
+			return runWatch()
 		default:
 			fmt.Printf("Unknown command: %s\n", os.Args[1])
 			printUsage()
@@ -213,6 +221,47 @@ func runDoctor() error {
 	return nil
 }
 
+func runWatch() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("no config found, run 'prflow setup' first")
+	}
+
+	// Parse optional interval from args (e.g. prflow watch 5m)
+	interval := 2 * time.Minute
+	if cfg.Settings.WatchInterval != "" {
+		if d, err := time.ParseDuration(cfg.Settings.WatchInterval); err == nil {
+			interval = d
+		}
+	}
+	if len(os.Args) > 2 {
+		if d, err := time.ParseDuration(os.Args[2]); err == nil {
+			interval = d
+		}
+	}
+
+	username, err := gh.CheckAuth()
+	if err != nil {
+		return fmt.Errorf("not authenticated: %w", err)
+	}
+
+	db, err := cache.Open()
+	if err != nil {
+		fmt.Printf("warning: cache unavailable: %v\n", err)
+	}
+	if db != nil {
+		defer db.Close()
+	}
+
+	fmt.Printf("Watching PRs as %s (interval: %s). Press Ctrl+C to stop.\n", username, interval)
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	w := watch.New(cfg, db, username, interval)
+	return w.Run(ctx)
+}
+
 func printUsage() {
 	fmt.Println(`Usage: prflow [command]
 
@@ -223,5 +272,6 @@ Commands:
   ls        Quick list (no TUI)
   config    Show config path
   doctor    Check dependencies (gh, git, claude)
+  watch     Background mode with OS notifications
   version   Print version`)
 }
