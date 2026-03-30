@@ -3,6 +3,8 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"strconv"
 	"strings"
 
 	"github.com/cheenu1092-oss/prflow/internal/ai"
@@ -29,6 +31,8 @@ func Execute() error {
 			return runConfig()
 		case "doctor":
 			return runDoctor()
+		case "open":
+			return runOpen()
 		default:
 			fmt.Printf("Unknown command: %s\n", os.Args[1])
 			printUsage()
@@ -208,6 +212,111 @@ func runDoctor() error {
 	return nil
 }
 
+// openArgs holds the parsed result of a prflow open argument.
+type openArgs struct {
+	Repo   string // "org/repo" or empty
+	Number int    // PR number or 0
+}
+
+// parseOpenArgs parses the argument to `prflow open`.
+// Supported formats:
+//   - "org/repo#42" -> repo="org/repo", number=42
+//   - "#42"         -> repo="", number=42
+//   - "org/repo"    -> repo="org/repo", number=0
+//   - ""            -> repo="", number=0
+func parseOpenArgs(arg string) (openArgs, error) {
+	if arg == "" {
+		return openArgs{}, nil
+	}
+
+	// Check for # separator
+	if idx := strings.Index(arg, "#"); idx >= 0 {
+		numStr := arg[idx+1:]
+		repo := arg[:idx]
+		if numStr == "" {
+			return openArgs{}, fmt.Errorf("missing PR number after #")
+		}
+		n, err := strconv.Atoi(numStr)
+		if err != nil || n <= 0 {
+			return openArgs{}, fmt.Errorf("invalid PR number: %s", numStr)
+		}
+		return openArgs{Repo: repo, Number: n}, nil
+	}
+
+	// No #, treat as repo
+	if strings.Contains(arg, "/") {
+		return openArgs{Repo: arg, Number: 0}, nil
+	}
+
+	return openArgs{}, fmt.Errorf("invalid argument: %s (expected org/repo, #number, or org/repo#number)", arg)
+}
+
+// repoFromRemote infers the "org/repo" from the current directory's git remote.
+var repoFromRemote = func() (string, error) {
+	out, err := exec.Command("git", "remote", "get-url", "origin").Output()
+	if err != nil {
+		return "", fmt.Errorf("could not detect repo from git remote: %w", err)
+	}
+	return parseRepoFromURL(strings.TrimSpace(string(out)))
+}
+
+// parseRepoFromURL extracts "org/repo" from a git remote URL.
+// Supports both HTTPS and SSH formats.
+func parseRepoFromURL(rawURL string) (string, error) {
+	u := rawURL
+	// SSH: git@github.com:org/repo.git
+	if strings.HasPrefix(u, "git@") {
+		u = strings.TrimPrefix(u, "git@")
+		if i := strings.Index(u, ":"); i >= 0 {
+			u = u[i+1:]
+		}
+		u = strings.TrimSuffix(u, ".git")
+		if strings.Contains(u, "/") {
+			return u, nil
+		}
+	}
+	// HTTPS: https://github.com/org/repo.git
+	u = strings.TrimSuffix(u, ".git")
+	parts := strings.Split(u, "/")
+	if len(parts) >= 2 {
+		return parts[len(parts)-2] + "/" + parts[len(parts)-1], nil
+	}
+	return "", fmt.Errorf("could not parse repo from URL: %s", rawURL)
+}
+
+func runOpen() error {
+	arg := ""
+	if len(os.Args) > 2 {
+		arg = os.Args[2]
+	}
+
+	parsed, err := parseOpenArgs(arg)
+	if err != nil {
+		return err
+	}
+
+	repo := parsed.Repo
+
+	// If no repo specified, infer from git remote
+	if repo == "" {
+		inferred, err := repoFromRemote()
+		if err != nil {
+			return err
+		}
+		repo = inferred
+	}
+
+	var url string
+	if parsed.Number > 0 {
+		url = fmt.Sprintf("https://github.com/%s/pull/%d", repo, parsed.Number)
+	} else {
+		url = fmt.Sprintf("https://github.com/%s/pulls", repo)
+	}
+
+	fmt.Printf("Opening %s\n", url)
+	return gh.OpenInBrowser(url)
+}
+
 func printUsage() {
 	fmt.Println(`Usage: prflow [command]
 
@@ -217,6 +326,7 @@ Commands:
   sync      Force refresh PR cache
   ls        Quick list (no TUI)
   config    Show config path
+  open      Open PR in browser (org/repo#42, #42, org/repo)
   doctor    Check dependencies (gh, git, claude)
   version   Print version`)
 }
