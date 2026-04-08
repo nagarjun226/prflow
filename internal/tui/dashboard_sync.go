@@ -41,6 +41,20 @@ func syncPRs(db *cache.DB, cfg *config.Config, username string) tea.Cmd {
 		for _, repo := range cfg.Repos {
 			repoSet[repo] = true
 		}
+		// Fetch review-requested and reviewed PRs up-front so their repos get
+		// included in Step 2's parallel ListPRsForRepo refresh.
+		reviewReqs, _ := gh.SearchReviewRequests()
+		reviewedPRs, _ := gh.SearchReviewedPRs()
+		for _, pr := range reviewReqs {
+			if pr.Repository.NameWithOwner != "" {
+				repoSet[pr.Repository.NameWithOwner] = true
+			}
+		}
+		for _, pr := range reviewedPRs {
+			if pr.Repository.NameWithOwner != "" {
+				repoSet[pr.Repository.NameWithOwner] = true
+			}
+		}
 
 		// Step 2: For each repo, get rich PR data (parallelized)
 		type repoResult struct {
@@ -69,10 +83,14 @@ func syncPRs(db *cache.DB, cfg *config.Config, username string) tea.Cmd {
 			close(resultsCh)
 		}()
 
+		// allRepoPRs collects the rich per-repo results for use in Steps 3/4
+		allRepoPRs := make(map[string]gh.PR) // key -> richest PR data we have
+
 		for res := range resultsCh {
 			for i := range res.prs {
 				pr := &res.prs[i]
 				key := fmt.Sprintf("%s#%d", res.repo, pr.Number)
+				allRepoPRs[key] = *pr
 				if seenPRs[key] {
 					continue
 				}
@@ -127,27 +145,30 @@ func syncPRs(db *cache.DB, cfg *config.Config, username string) tea.Cmd {
 			}
 		}
 
-		// Step 3: Get PRs where review is requested from me
-		reviewPRs, _ := gh.SearchReviewRequests()
-		for i := range reviewPRs {
-			pr := &reviewPRs[i]
+		// Step 3: PRs where review is requested from me (use rich data from Step 2 when available)
+		for i := range reviewReqs {
+			pr := &reviewReqs[i]
 			key := fmt.Sprintf("%s#%d", pr.Repository.NameWithOwner, pr.Number)
 			if seenPRs[key] {
 				continue
 			}
 			seenPRs[key] = true
+			richPR := *pr
+			if rich, ok := allRepoPRs[key]; ok {
+				richPR = rich
+			}
 			cached := cache.CachedPR{
-				PR:      *pr,
+				PR:      richPR,
 				Repo:    pr.Repository.NameWithOwner,
 				Section: "review",
 			}
 			review = append(review, cached)
-			db.UpsertPR(pr, cached.Repo, "review")
+			db.UpsertPR(&richPR, cached.Repo, "review")
 		}
 
-		// Step 4: Get PRs needing re-attention (reviewed by me, but updated after my review)
+		// Step 4: PRs needing re-attention (reviewed by me, updated after my review)
+		// Use rich data from Step 2 where available; fall back to GetPRDetail only if needed.
 		var needsAttention []cache.CachedPR
-		reviewedPRs, _ := gh.SearchReviewedPRs()
 		for i := range reviewedPRs {
 			pr := &reviewedPRs[i]
 			key := fmt.Sprintf("%s#%d", pr.Repository.NameWithOwner, pr.Number)
@@ -157,10 +178,16 @@ func syncPRs(db *cache.DB, cfg *config.Config, username string) tea.Cmd {
 				continue
 			}
 
-			// Get full PR details to check if it needs attention
-			detail, err := gh.GetPRDetail(pr.Repository.NameWithOwner, pr.Number)
-			if err != nil {
-				continue
+			// Use rich data from Step 2 if available (avoids extra API call)
+			var detail *gh.PR
+			if rich, ok := allRepoPRs[key]; ok {
+				detail = &rich
+			} else {
+				var err error
+				detail, err = gh.GetPRDetail(pr.Repository.NameWithOwner, pr.Number)
+				if err != nil {
+					continue
+				}
 			}
 
 			// Check if there's been activity after my last review
